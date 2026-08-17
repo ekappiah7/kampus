@@ -5,10 +5,17 @@
   "targets": {
     "akampuz": {
       "hosting": {
-        "web": ["akampuz-web"],
-        "staff-portal": ["akampuz-staff-portal"],
-        "mobile-web": ["akampuz-mobile-web"]
+        "web": [
+          "akampuz-web"
+        ],
+        "staff-portal": [
+          "akampuz-staff-portal"
+        ],
+        "mobile-web": [
+          "akampuz-mobile-web"
+        ]
       }
     }
-  }
+  },
+  "etags": {}
 }

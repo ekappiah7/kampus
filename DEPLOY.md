@@ -1,5 +1,37 @@
 # Deploying Kampus for a client demo (Firebase Hosting + Cloud Run, Blaze plan)
 
+## Live demo (deployed 2026-08-17, project `akampuz`)
+
+| Surface | URL |
+|---|---|
+| Marketing website | https://akampuz-web.web.app |
+| Staff portal | https://akampuz-staff-portal.web.app |
+| API (direct, used by both apps) | https://kampus-api-953883277229.us-central1.run.app |
+
+Demo logins (password `changeme` for everyone — rotate before this goes near a
+real client's data):
+- Parent app / would-be mobile app: phone `024 883 4000`
+- Staff portal, teacher: `abigail.bentil@aspireroyal.edu.gh`
+- Staff portal, admin: `collins.owusu@aspireroyal.edu.gh`
+
+Database is Neon Postgres (project "Kampus", `neondb`), migrated and seeded with
+the Aspire Royal Academy reference tenant. `JWT_SECRET` and `DATABASE_URL` are
+stored in Secret Manager (`kampus-jwt-secret`, `kampus-database-url`) and injected
+into the `kampus-api` Cloud Run service — not committed anywhere.
+
+The parent mobile app itself is not deployed anywhere yet (Expo apps aren't
+"hosted" the way a website is) — see step 5 below for a browser-based demo build,
+or `eas build` for a real installable app.
+
+To redeploy after a code change: rebuild+push the relevant image with
+`gcloud builds submit --config=... .` (see steps 2–3 below for the exact
+commands with `--build-arg`s), then `gcloud run deploy <service> --image ...`
+again — Cloud Run keeps serving the old revision with zero downtime until the
+new one is healthy.
+
+---
+
+
 Firebase's Spark (free, no-billing) plan can't run a server — no SSR, no long-lived
 API. This setup keeps the exact stack from the repo (Postgres/Prisma/Express/Next.js,
 no rewrite) and hosts it through **Firebase Hosting on the Blaze plan**, which
