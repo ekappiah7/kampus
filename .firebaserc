@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "REPLACE_WITH_YOUR_FIREBASE_PROJECT_ID"
+  },
+  "targets": {
+    "REPLACE_WITH_YOUR_FIREBASE_PROJECT_ID": {
+      "hosting": {
+        "web": ["kampus-web"],
+        "staff-portal": ["kampus-staff-portal"],
+        "mobile-web": ["kampus-mobile-web"]
+      }
+    }
+  }
+}

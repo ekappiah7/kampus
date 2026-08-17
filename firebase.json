@@ -1,0 +1,20 @@
+{
+  "hosting": [
+    {
+      "target": "web",
+      "ignore": ["firebase.json", "**/.*"],
+      "rewrites": [{ "source": "**", "run": { "serviceId": "kampus-web", "region": "us-central1" } }]
+    },
+    {
+      "target": "staff-portal",
+      "ignore": ["firebase.json", "**/.*"],
+      "rewrites": [{ "source": "**", "run": { "serviceId": "kampus-staff-portal", "region": "us-central1" } }]
+    },
+    {
+      "target": "mobile-web",
+      "public": "apps/mobile/dist",
+      "ignore": ["firebase.json", "**/.*"],
+      "rewrites": [{ "source": "**", "destination": "/index.html" }]
+    }
+  ]
+}

@@ -29,6 +29,21 @@ product — see "Open items" below before treating any surface as done.
 
 **Mobile (`apps/mobile`)** — Expo Router app: tab bar (Home, Homework, Fees, Calendar, More) + child switcher + quick-links grid on Home, and a real screen + API wiring for every screen in the handoff: Attendance, Grades (CA breakdown, not just final number), Homework, Fees (mobile money/card payment flow modal), Calendar, Announcements, Cafeteria, Pickup (code + status steps), Parent Voice, Notifications, More.
 
+## Deployment
+
+`DEPLOY.md` has a full runbook for a Firebase Hosting (Blaze) + Cloud Run demo
+deploy — Dockerfiles for all three server-side apps (`apps/api`, `apps/web`,
+`apps/staff-portal`) are in the repo and were verified end-to-end in this pass:
+built, run against a real containerized Postgres, and hit with real HTTP
+requests (login, authenticated queries, page loads) before being committed.
+Two build details worth knowing if you touch the Dockerfiles:
+- `apps/api` bundles with esbuild (`--external:@prisma/client`) rather than
+  `tsc`, then flattens `@prisma/client` + `.prisma/client` out of pnpm's
+  content-addressable store into a plain `node_modules` folder — pnpm's default
+  symlink layout doesn't survive a partial `COPY` otherwise.
+- The API's base image is `node:20-bookworm`, not `-slim` — the query engine
+  binary needs libssl, which `-slim` doesn't ship.
+
 ## Open items (do before calling any surface production-ready)
 
 - **No test coverage anywhere.** Add API integration tests (auth, tenant isolation, CA rollup, pickup confirm) and component tests before shipping.

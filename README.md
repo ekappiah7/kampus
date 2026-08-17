@@ -6,7 +6,8 @@ portal — productized by JAKBRAIN Consult. This repo recreates the
 client) as real, multi-tenant applications backed by a shared Postgres
 database and API.
 
-See [PROGRESS.md](./PROGRESS.md) for what's implemented vs. still open.
+See [PROGRESS.md](./PROGRESS.md) for what's implemented vs. still open, and
+[DEPLOY.md](./DEPLOY.md) for deploying a live demo to Firebase Hosting + Cloud Run.
 
 ## Structure (pnpm + turborepo monorepo)
 
