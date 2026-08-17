@@ -1,13 +1,13 @@
 {
   "projects": {
-    "default": "REPLACE_WITH_YOUR_FIREBASE_PROJECT_ID"
+    "default": "akampuz"
   },
   "targets": {
-    "REPLACE_WITH_YOUR_FIREBASE_PROJECT_ID": {
+    "akampuz": {
       "hosting": {
-        "web": ["kampus-web"],
-        "staff-portal": ["kampus-staff-portal"],
-        "mobile-web": ["kampus-mobile-web"]
+        "web": ["akampuz-web"],
+        "staff-portal": ["akampuz-staff-portal"],
+        "mobile-web": ["akampuz-mobile-web"]
       }
     }
   }
