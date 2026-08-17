@@ -1,0 +1,22 @@
+{
+  "name": "kampus",
+  "private": true,
+  "description": "Multi-tenant school digital platform (marketing website + parent app + staff portal) productized by JAKBRAIN Consult.",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "db:generate": "pnpm --filter @kampus/db generate",
+    "db:migrate": "pnpm --filter @kampus/db migrate",
+    "db:seed": "pnpm --filter @kampus/db seed"
+  },
+  "devDependencies": {
+    "turbo": "^2.1.3",
+    "typescript": "^5.6.3"
+  }
+}

@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+.next/
+.expo/
+.expo-shared/
+.turbo/
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+.DS_Store
+coverage/
+.vercel/
+apps/db/prisma/dev.db
+packages/db/prisma/dev.db
+*.log

@@ -1,0 +1,17 @@
+@import url("https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Manrope:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-bg text-text-primary font-body;
+}
+
+.image-slot {
+  @apply flex items-center justify-center rounded-card border-2 border-dashed border-border bg-white/60 text-sm text-text-muted;
+}

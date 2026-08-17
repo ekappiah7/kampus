@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kampus
+      POSTGRES_PASSWORD: kampus
+      POSTGRES_DB: kampus
+    ports:
+      - "5432:5432"
+    volumes:
+      - kampus_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  kampus_postgres_data:

@@ -1,0 +1,675 @@
+// Kampus — multi-tenant school platform data model.
+// Modeled from design_handoff_school_platform/README.md (Aspire Royal Academy handoff).
+// Every core table is scoped by schoolId (tenant) so no data crosses schools.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy & identity
+// ---------------------------------------------------------------------------
+
+model School {
+  id            String   @id @default(cuid())
+  name          String
+  subdomain     String   @unique
+  primaryColor  String   @default("#FFC629")
+  logoUrl       String?
+  whatsappPhone String?
+  accreditation String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Marketing/content copy — free-form per tenant so each school can carry its
+  // own About/Admissions/Safety copy without a schema change per client.
+  content SchoolContent?
+
+  classes       Class[]
+  students      Student[]
+  parents       Parent[]
+  staff         Staff[]
+  terms         Term[]
+  feeLineItems  FeeLineItem[]
+  events        Event[]
+  cafeteriaMenu CafeteriaMenuItem[]
+  testimonials  Testimonial[]
+  voiceInbox    ParentVoiceSubmission[]
+  notifications Notification[]
+
+  @@map("schools")
+}
+
+model SchoolContent {
+  id                 String  @id @default(cuid())
+  schoolId           String  @unique
+  school             School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  heroHeadline       String?
+  heroSubcopy        String?
+  aboutText          String?
+  admissionsText     String?
+  safetyPickupPolicy String?
+  statsStudents      Int?
+  statsTeachers      Int?
+  statsYears         Int?
+  jhsComingSoon      Boolean @default(true)
+
+  @@map("school_content")
+}
+
+enum StaffRole {
+  TEACHER
+  ADMIN
+  GATE_STAFF
+}
+
+model Staff {
+  id            String      @id @default(cuid())
+  schoolId      String
+  school        School      @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  name          String
+  email         String
+  passwordHash  String
+  role          StaffRole
+  title         String? // e.g. "Class Teacher", "Head Teacher & Administrator"
+  phone         String?
+  status        StaffStatus @default(ACTIVE)
+  classId       String? // set when role = TEACHER and assigned as class teacher
+  homeroomClass Class?      @relation("ClassTeacher", fields: [classId], references: [id])
+  createdAt     DateTime    @default(now())
+
+  postsAuthored         Post[]                  @relation("PostAuthor")
+  postsApproved         Post[]                  @relation("PostApprover")
+  attendanceMarked      AttendanceRecord[]      @relation("AttendanceMarkedBy")
+  assessmentEntries     AssessmentEntry[]       @relation("AssessmentEnteredBy")
+  pickupsConfirmed      PickupNotice[]          @relation("PickupConfirmedBy")
+  discountsApplied      Discount[]              @relation("DiscountAppliedBy")
+  ledgerEntriesCreated  FeeLedgerEntry[]        @relation("LedgerCreatedByStaff")
+  voiceResponses        ParentVoiceSubmission[] @relation("VoiceRespondedBy")
+  messageThreadsAsStaff MessageThread[]         @relation("ThreadStaff")
+  messagesSent          Message[]               @relation("MessageSenderStaff")
+
+  @@unique([schoolId, email])
+  @@index([schoolId])
+  @@map("staff")
+}
+
+enum StaffStatus {
+  ACTIVE
+  INACTIVE
+  ON_LEAVE
+}
+
+model Parent {
+  id           String   @id @default(cuid())
+  schoolId     String
+  school       School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  name         String
+  email        String?
+  phone        String
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  children          ParentStudent[]
+  pickupNoticesSent PickupNotice[]          @relation("PickupRequestedBy")
+  voiceSubmissions  ParentVoiceSubmission[]
+  notifications     Notification[]
+  messageThreads    MessageThread[]         @relation("ThreadParent")
+  messagesSent      Message[]               @relation("MessageSenderParent")
+  payments          Payment[]
+
+  @@unique([schoolId, phone])
+  @@index([schoolId])
+  @@map("parents")
+}
+
+/// Supports multiple guardians per child (parent/family member/guardian/other), one marked primary.
+model ParentStudent {
+  id        String  @id @default(cuid())
+  parentId  String
+  parent    Parent  @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  relation  String // "Father", "Mother", "Guardian", "Family member", "Other"
+  isPrimary Boolean @default(false)
+
+  @@unique([parentId, studentId])
+  @@index([studentId])
+  @@map("parent_students")
+}
+
+// ---------------------------------------------------------------------------
+// Academic structure
+// ---------------------------------------------------------------------------
+
+model Class {
+  id       String @id @default(cuid())
+  schoolId String
+  school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  name     String // "Crèche", "Nursery 2", "KG 2", "Primary 1" ... "Primary 6"
+  order    Int // sort order Crèche -> Primary 6
+
+  classTeachers Staff[]       @relation("ClassTeacher")
+  students      Student[]
+  subjects      Subject[]
+  posts         Post[]
+  feeLineItems  FeeLineItem[]
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
+  @@map("classes")
+}
+
+model Subject {
+  id       String @id @default(cuid())
+  schoolId String
+  classId  String
+  class    Class  @relation(fields: [classId], references: [id], onDelete: Cascade)
+  name     String
+
+  assessmentEntries AssessmentEntry[]
+
+  @@unique([classId, name])
+  @@index([schoolId])
+  @@map("subjects")
+}
+
+model Term {
+  id           String   @id @default(cuid())
+  schoolId     String
+  school       School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  name         String // "Term 2"
+  academicYear String // "2025/26"
+  startDate    DateTime
+  endDate      DateTime
+  isCurrent    Boolean  @default(false)
+
+  assessmentEntries AssessmentEntry[]
+  feeCharges        StudentFeeCharge[]
+  ledgerEntries     FeeLedgerEntry[]
+  discounts         Discount[]
+
+  @@unique([schoolId, name, academicYear])
+  @@index([schoolId])
+  @@map("terms")
+}
+
+model Student {
+  id             String   @id @default(cuid())
+  schoolId       String
+  school         School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  classId        String
+  class          Class    @relation(fields: [classId], references: [id])
+  name           String
+  admissionNo    String?
+  avatarInitials String?
+  avatarColor    String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  guardians         ParentStudent[]
+  attendance        AttendanceRecord[]
+  assessmentEntries AssessmentEntry[]
+  postStatuses      PostStudentStatus[]
+  feeCharges        StudentFeeCharge[]
+  scholarships      Scholarship[]
+  discounts         Discount[]
+  ledgerEntries     FeeLedgerEntry[]
+  pickupNotices     PickupNotice[]
+  payments          Payment[]
+
+  @@index([schoolId, classId])
+  @@map("students")
+}
+
+// ---------------------------------------------------------------------------
+// Attendance
+// ---------------------------------------------------------------------------
+
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  ABSENT
+}
+
+model AttendanceRecord {
+  id              String           @id @default(cuid())
+  studentId       String
+  student         Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  date            DateTime         @db.Date
+  status          AttendanceStatus
+  markedByStaffId String?
+  markedByStaff   Staff?           @relation("AttendanceMarkedBy", fields: [markedByStaffId], references: [id])
+  createdAt       DateTime         @default(now())
+
+  @@unique([studentId, date])
+  @@index([studentId])
+  @@map("attendance_records")
+}
+
+// ---------------------------------------------------------------------------
+// Continuous Assessment (new feature — replaces single exam score)
+// ---------------------------------------------------------------------------
+
+enum AssessmentType {
+  CLASSWORK
+  QUIZ
+  GROUP_WORK
+  PROJECT
+  HOMEWORK_COMPLETION
+  MID_TERM_EXAM
+  END_OF_TERM_EXAM
+}
+
+/// One weighted component of a subject's grade for a term. Final grade = weighted rollup of these.
+model AssessmentEntry {
+  id               String         @id @default(cuid())
+  studentId        String
+  student          Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subjectId        String
+  subject          Subject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  termId           String
+  term             Term           @relation(fields: [termId], references: [id], onDelete: Cascade)
+  type             AssessmentType
+  label            String // e.g. "Algebra worksheet — Ch. 5", "Mid-term exam"
+  date             DateTime       @db.Date
+  score            Float
+  maxScore         Float          @default(100)
+  weightPct        Float // weight of this component toward the final grade, 0-100
+  enteredByStaffId String
+  enteredByStaff   Staff          @relation("AssessmentEnteredBy", fields: [enteredByStaffId], references: [id])
+  createdAt        DateTime       @default(now())
+
+  @@index([studentId, subjectId, termId])
+  @@map("assessment_entries")
+}
+
+// ---------------------------------------------------------------------------
+// Homework / Announcements (with teacher -> admin approval workflow)
+// ---------------------------------------------------------------------------
+
+enum PostKind {
+  HOMEWORK
+  ANNOUNCEMENT
+}
+
+enum PostStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Post {
+  id                String     @id @default(cuid())
+  schoolId          String
+  kind              PostKind
+  classId           String? // null = school-wide (admin announcements)
+  class             Class?     @relation(fields: [classId], references: [id])
+  subject           String? // free-text subject label for homework, e.g. "MATHEMATICS"
+  title             String
+  body              String
+  dueDate           DateTime?  @db.Date
+  authorStaffId     String
+  author            Staff      @relation("PostAuthor", fields: [authorStaffId], references: [id])
+  status            PostStatus @default(PENDING)
+  approvedByStaffId String?
+  approver          Staff?     @relation("PostApprover", fields: [approvedByStaffId], references: [id])
+  publishedAt       DateTime?
+  createdAt         DateTime   @default(now())
+
+  studentStatuses PostStudentStatus[]
+
+  @@index([schoolId, classId])
+  @@map("posts")
+}
+
+enum HomeworkStatus {
+  PENDING
+  SUBMITTED
+}
+
+/// Per-student completion status for a homework post (parent-reported).
+model PostStudentStatus {
+  id        String         @id @default(cuid())
+  postId    String
+  post      Post           @relation(fields: [postId], references: [id], onDelete: Cascade)
+  studentId String
+  student   Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  status    HomeworkStatus @default(PENDING)
+
+  @@unique([postId, studentId])
+  @@map("post_student_statuses")
+}
+
+// ---------------------------------------------------------------------------
+// Fees, scholarships, discounts, ledger (new features)
+// ---------------------------------------------------------------------------
+
+/// The fee schedule definition — e.g. "Tuition — Term 2" for KG 2, GHS 900.
+model FeeLineItem {
+  id       String  @id @default(cuid())
+  schoolId String
+  school   School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  classId  String?
+  class    Class?  @relation(fields: [classId], references: [id])
+  label    String // "Tuition", "Feeding fee", "PTA dues", "Sports & excursion"
+  amount   Float
+
+  charges             StudentFeeCharge[]
+  scholarshipCoverage ScholarshipCoverage[]
+  discounts           Discount[]
+  ledgerEntries       FeeLedgerEntry[]
+
+  @@index([schoolId, classId])
+  @@map("fee_line_items")
+}
+
+enum FeeChargeStatus {
+  PAID
+  PENDING
+  OVERDUE
+}
+
+/// A specific student's instance of a fee line item for a term — net amount after scholarship/discount.
+model StudentFeeCharge {
+  id             String          @id @default(cuid())
+  studentId      String
+  student        Student         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  feeLineItemId  String
+  feeLineItem    FeeLineItem     @relation(fields: [feeLineItemId], references: [id])
+  termId         String
+  term           Term            @relation(fields: [termId], references: [id])
+  originalAmount Float
+  netAmount      Float // after scholarship/discount subsidies
+  status         FeeChargeStatus @default(PENDING)
+
+  @@unique([studentId, feeLineItemId, termId])
+  @@index([studentId, termId])
+  @@map("student_fee_charges")
+}
+
+/// A scholarship covers specific fee line items, not a blanket "free" flag.
+model Scholarship {
+  id        String    @id @default(cuid())
+  studentId String
+  student   Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  name      String // "GES Merit Scholarship"
+  sponsor   String?
+  validFrom DateTime  @db.Date
+  validTo   DateTime? @db.Date
+  notes     String?
+  createdAt DateTime  @default(now())
+
+  coverage ScholarshipCoverage[]
+
+  @@index([studentId])
+  @@map("scholarships")
+}
+
+enum SubsidyType {
+  FIXED
+  PERCENT
+}
+
+/// Which fee line item a scholarship covers, and by how much.
+model ScholarshipCoverage {
+  id            String      @id @default(cuid())
+  scholarshipId String
+  scholarship   Scholarship @relation(fields: [scholarshipId], references: [id], onDelete: Cascade)
+  feeLineItemId String
+  feeLineItem   FeeLineItem @relation(fields: [feeLineItemId], references: [id])
+  subsidyType   SubsidyType
+  subsidyValue  Float // amount (GHS) if FIXED, percent 0-100 if PERCENT
+
+  @@unique([scholarshipId, feeLineItemId])
+  @@map("scholarship_coverage")
+}
+
+/// Admin-applied discount — fixed or percent, against one line item or the whole balance, one-time or recurring.
+model Discount {
+  id               String       @id @default(cuid())
+  studentId        String
+  student          Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  feeLineItemId    String? // null = applies to total balance
+  feeLineItem      FeeLineItem? @relation(fields: [feeLineItemId], references: [id])
+  amountType       SubsidyType
+  value            Float // amount (GHS) if FIXED, percent 0-100 if PERCENT
+  recurring        Boolean      @default(false)
+  termId           String? // required when recurring = false (applies that term only)
+  term             Term?        @relation(fields: [termId], references: [id])
+  reason           String // "Sibling discount", "Staff-child discount", "Early-payment discount", "Hardship waiver"
+  appliedByStaffId String
+  appliedByStaff   Staff        @relation("DiscountAppliedBy", fields: [appliedByStaffId], references: [id])
+  createdAt        DateTime     @default(now())
+
+  @@index([studentId])
+  @@map("discounts")
+}
+
+enum PaymentMethod {
+  MOMO_MTN
+  MOMO_VODAFONE
+  MOMO_AIRTELTIGO
+  CARD
+  CASH
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+model Payment {
+  id        String        @id @default(cuid())
+  studentId String
+  student   Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  parentId  String
+  parent    Parent        @relation(fields: [parentId], references: [id])
+  amount    Float
+  method    PaymentMethod
+  status    PaymentStatus @default(PENDING)
+  reference String? // gateway transaction reference
+  createdAt DateTime      @default(now())
+
+  ledgerEntry FeeLedgerEntry?
+
+  @@index([studentId])
+  @@map("payments")
+}
+
+enum LedgerEntryType {
+  CHARGE
+  PAYMENT
+  SCHOLARSHIP
+  DISCOUNT
+}
+
+/// Append-only audit trail: every charge, payment, scholarship subsidy, and discount touching a balance.
+model FeeLedgerEntry {
+  id               String          @id @default(cuid())
+  studentId        String
+  student          Student         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  termId           String
+  term             Term            @relation(fields: [termId], references: [id])
+  type             LedgerEntryType
+  amount           Float // positive = charge, negative = payment/subsidy/discount reducing balance
+  feeLineItemId    String?
+  feeLineItem      FeeLineItem?    @relation(fields: [feeLineItemId], references: [id])
+  paymentId        String?         @unique
+  payment          Payment?        @relation(fields: [paymentId], references: [id])
+  note             String?
+  createdByStaffId String?
+  createdByStaff   Staff?          @relation("LedgerCreatedByStaff", fields: [createdByStaffId], references: [id])
+  createdAt        DateTime        @default(now())
+
+  @@index([studentId, termId])
+  @@map("fee_ledger_entries")
+}
+
+// ---------------------------------------------------------------------------
+// Pickup Notice + Pickup Desk (new staff-portal feature)
+// ---------------------------------------------------------------------------
+
+enum PickupStatus {
+  PENDING
+  CONFIRMED
+}
+
+model PickupNotice {
+  id                  String       @id @default(cuid())
+  studentId           String
+  student             Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  requestedByParentId String
+  requestedByParent   Parent       @relation("PickupRequestedBy", fields: [requestedByParentId], references: [id])
+  pickupPersonName    String
+  relation            String // "Parent", "Family member", "Guardian", "Other"
+  code                String       @unique // one-time pickup code
+  status              PickupStatus @default(PENDING)
+  confirmedByStaffId  String?
+  confirmedByStaff    Staff?       @relation("PickupConfirmedBy", fields: [confirmedByStaffId], references: [id])
+  confirmedAt         DateTime?
+  createdAt           DateTime     @default(now())
+
+  @@index([studentId])
+  @@index([code])
+  @@map("pickup_notices")
+}
+
+// ---------------------------------------------------------------------------
+// Parent Voice
+// ---------------------------------------------------------------------------
+
+enum VoiceCategory {
+  SUGGESTION
+  COMPLAINT
+  HONOUR_A_TEACHER
+  GENERAL
+}
+
+model ParentVoiceSubmission {
+  id                 String        @id @default(cuid())
+  schoolId           String
+  school             School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  parentId           String
+  parent             Parent        @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  category           VoiceCategory
+  aboutStaffName     String? // free text — who the honour/complaint is about, if applicable
+  message            String
+  resolved           Boolean       @default(false)
+  adminResponse      String?
+  respondedByStaffId String?
+  respondedByStaff   Staff?        @relation("VoiceRespondedBy", fields: [respondedByStaffId], references: [id])
+  createdAt          DateTime      @default(now())
+
+  @@index([schoolId])
+  @@map("parent_voice_submissions")
+}
+
+// ---------------------------------------------------------------------------
+// Notifications, Events, Cafeteria, Testimonials
+// ---------------------------------------------------------------------------
+
+enum NotificationType {
+  ANNOUNCEMENT
+  HOMEWORK
+  GRADE_POSTED
+  FEE_REMINDER
+  PICKUP_CONFIRMED
+  POST_APPROVED
+  VOICE_RESPONSE
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  schoolId  String
+  school    School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  parentId  String?
+  parent    Parent?          @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  body      String
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  @@index([schoolId, parentId])
+  @@map("notifications")
+}
+
+model Event {
+  id       String   @id @default(cuid())
+  schoolId String
+  school   School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  title    String
+  date     DateTime @db.Date
+  time     String? // "9:00am · Main Hall"
+  location String?
+
+  @@index([schoolId])
+  @@map("events")
+}
+
+model CafeteriaMenuItem {
+  id        String  @id @default(cuid())
+  schoolId  String
+  school    School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  dayOfWeek String // "MONDAY".."FRIDAY"
+  main      String
+  side      String?
+
+  @@unique([schoolId, dayOfWeek])
+  @@map("cafeteria_menu_items")
+}
+
+model Testimonial {
+  id         String  @id @default(cuid())
+  schoolId   String
+  school     School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  authorName String
+  relation   String? // "Parent of Primary 4 pupil"
+  quote      String
+  photoUrl   String?
+  published  Boolean @default(true)
+
+  @@map("testimonials")
+}
+
+// ---------------------------------------------------------------------------
+// Messaging (Staff <-> Parent threads referenced by Staff Portal "Messages")
+// ---------------------------------------------------------------------------
+
+model MessageThread {
+  id        String   @id @default(cuid())
+  schoolId  String
+  staffId   String
+  staff     Staff    @relation("ThreadStaff", fields: [staffId], references: [id], onDelete: Cascade)
+  parentId  String
+  parent    Parent   @relation("ThreadParent", fields: [parentId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  messages Message[]
+
+  @@unique([staffId, parentId])
+  @@index([schoolId])
+  @@map("message_threads")
+}
+
+model Message {
+  id             String        @id @default(cuid())
+  threadId       String
+  thread         MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  senderStaffId  String?
+  senderStaff    Staff?        @relation("MessageSenderStaff", fields: [senderStaffId], references: [id])
+  senderParentId String?
+  senderParent   Parent?       @relation("MessageSenderParent", fields: [senderParentId], references: [id])
+  body           String
+  createdAt      DateTime      @default(now())
+
+  @@index([threadId])
+  @@map("messages")
+}
