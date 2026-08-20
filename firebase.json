@@ -2,19 +2,33 @@
   "hosting": [
     {
       "target": "web",
-      "ignore": ["firebase.json", "**/.*"],
+      "public": "apps/web/public",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
       "rewrites": [{ "source": "**", "run": { "serviceId": "kampus-web", "region": "us-central1" } }]
     },
     {
       "target": "staff-portal",
-      "ignore": ["firebase.json", "**/.*"],
+      "public": "apps/staff-portal/public",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "headers": [
+        {
+          "source": "/sw.js",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]
+        }
+      ],
       "rewrites": [{ "source": "**", "run": { "serviceId": "kampus-staff-portal", "region": "us-central1" } }]
     },
     {
-      "target": "mobile-web",
-      "public": "apps/mobile/dist",
-      "ignore": ["firebase.json", "**/.*"],
-      "rewrites": [{ "source": "**", "destination": "/index.html" }]
+      "target": "parent-app",
+      "public": "apps/parent-app/public",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "headers": [
+        {
+          "source": "/sw.js",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]
+        }
+      ],
+      "rewrites": [{ "source": "**", "run": { "serviceId": "kampus-parent-app", "region": "us-central1" } }]
     }
   ]
 }

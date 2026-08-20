@@ -1,221 +1,134 @@
 # Deploying Kampus for a client demo (Firebase Hosting + Cloud Run, Blaze plan)
 
-## Live demo (deployed 2026-08-17, project `akampuz`)
+## Live (project `akampuz`)
 
 | Surface | URL |
 |---|---|
-| Marketing website | https://akampuz-web.web.app |
-| Staff portal | https://akampuz-staff-portal.web.app |
-| API (direct, used by both apps) | https://kampus-api-953883277229.us-central1.run.app |
+| Staff Portal (PWA) | https://akampuz-staff-portal.web.app |
+| Parent App (PWA) | https://akampuz-parent.web.app |
+| Website | https://akampuz-web.web.app |
+| API | https://kampus-api-953883277229.us-central1.run.app |
 
-Demo logins (password `changeme` for everyone — rotate before this goes near a
-real client's data):
-- Parent app / would-be mobile app: phone `024 883 4000`
-- Staff portal, teacher: `abigail.bentil@aspireroyal.edu.gh`
-- Staff portal, admin: `collins.owusu@aspireroyal.edu.gh`
+**No default credentials.** The system starts empty; the staff portal opens on a
+setup wizard that creates the school and its head administrator. See
+[DEMO.md](./DEMO.md) for the walkthrough.
 
-Database is Neon Postgres (project "Kampus", `neondb`), migrated and seeded with
-the Aspire Royal Academy reference tenant. `JWT_SECRET` and `DATABASE_URL` are
-stored in Secret Manager (`kampus-jwt-secret`, `kampus-database-url`) and injected
-into the `kampus-api` Cloud Run service — not committed anywhere.
+Database is Neon Postgres. `DATABASE_URL` and `JWT_SECRET` are in Secret Manager
+(`kampus-database-url`, `kampus-jwt-secret`) and injected into Cloud Run — never
+committed. The API runs `--min-instances=1` so there's no cold start mid-demo.
 
-The parent mobile app itself is not deployed anywhere yet (Expo apps aren't
-"hosted" the way a website is) — see step 5 below for a browser-based demo build,
-or `eas build` for a real installable app.
+### Redeploying
 
-To redeploy after a code change: rebuild+push the relevant image with
-`gcloud builds submit --config=... .` (see steps 2–3 below for the exact
-commands with `--build-arg`s), then `gcloud run deploy <service> --image ...`
-again — Cloud Run keeps serving the old revision with zero downtime until the
-new one is healthy.
-
----
-
-
-Firebase's Spark (free, no-billing) plan can't run a server — no SSR, no long-lived
-API. This setup keeps the exact stack from the repo (Postgres/Prisma/Express/Next.js,
-no rewrite) and hosts it through **Firebase Hosting on the Blaze plan**, which
-requires a billing card on file but costs **$0 at demo-level traffic**: Cloud Run's
-free tier is 2 million requests/month, and Firebase Hosting's free tier covers the
-bandwidth a demo will use.
-
-Three pieces run on Cloud Run (containers, from the Dockerfiles already in this
-repo); Firebase Hosting sits in front of them for clean URLs. Postgres lives outside
-Firebase entirely, on Neon's free tier, since Firebase has no relational database.
-
-## 0. Prerequisites (one-time, on your machine)
-
-1. A Google account → create a project at https://console.firebase.google.com,
-   then **Upgrade to Blaze** (Project settings → Usage and billing). You'll be asked
-   for a card; nothing is charged unless you exceed the free tier.
-2. Install CLIs:
-   ```bash
-   npm install -g firebase-tools
-   # gcloud: https://cloud.google.com/sdk/docs/install
-   ```
-3. Authenticate:
-   ```bash
-   firebase login
-   gcloud auth login
-   gcloud config set project YOUR_FIREBASE_PROJECT_ID
-   gcloud services enable run.googleapis.com artifactregistry.googleapis.com
-   ```
-4. A free Postgres database: sign up at https://neon.tech, create a project, copy
-   the connection string (`postgresql://...`). Put it somewhere safe — it's `DATABASE_URL`
-   below.
-5. Replace `REPLACE_WITH_YOUR_FIREBASE_PROJECT_ID` in `.firebaserc` with your real
-   project ID (both places).
-
-## 1. Provision the database
+Build configs live in `cloudbuild/`. From the repo root:
 
 ```bash
-cd packages/db
-echo 'DATABASE_URL="<your Neon connection string>"' > .env
-pnpm generate
-pnpm exec prisma migrate deploy
-pnpm seed          # loads the Aspire Royal Academy demo data
-```
+# migrations (destructive: resets the database to empty)
+gcloud builds submit --config=cloudbuild/migrate.yaml --region=us-central1 .
 
-## 2. Deploy the API to Cloud Run
-
-```bash
-cd /path/to/kampus   # repo root — the Dockerfile needs the whole workspace as build context
-gcloud artifacts repositories create kampus --repository-format=docker --location=us-central1 2>/dev/null || true
-
-docker build -f apps/api/Dockerfile -t us-central1-docker.pkg.dev/YOUR_PROJECT_ID/kampus/api .
-docker push us-central1-docker.pkg.dev/YOUR_PROJECT_ID/kampus/api
-
+# a service
+gcloud builds submit --config=cloudbuild/api.yaml --region=us-central1 .
 gcloud run deploy kampus-api \
-  --image us-central1-docker.pkg.dev/YOUR_PROJECT_ID/kampus/api \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --set-env-vars "JWT_SECRET=$(openssl rand -hex 32)" \
-  --set-secrets "DATABASE_URL=kampus-database-url:latest"
+  --image us-central1-docker.pkg.dev/akampuz/kampus/api:latest \
+  --region us-central1 --allow-unauthenticated --port 8080 \
+  --set-secrets "DATABASE_URL=kampus-database-url:latest,JWT_SECRET=kampus-jwt-secret:latest" \
+  --min-instances 1
+
+# same shape for web / staff-portal / parent-app, then:
+firebase deploy --only hosting --project akampuz
 ```
 
-`--set-secrets` expects the connection string to already be in Secret Manager —
-simplest one-time setup:
-```bash
-printf '%s' "<your Neon connection string>" | gcloud secrets create kampus-database-url --data-file=-
+`NEXT_PUBLIC_*` values are baked in at build time, so the API must be deployed
+before the front-ends if its URL changes.
+
+## How it fits together
+
+Firebase's Spark (free, no-billing) plan can't run a server, so this uses the
+**Blaze** plan: Firebase Hosting fronts three Cloud Run services built from the
+Dockerfiles in this repo. At demo traffic it costs nothing — Cloud Run's free
+tier is 2M requests/month — though `--min-instances=1` on the API does incur a
+small always-on charge, which is the price of never showing a client a cold
+start.
+
+Postgres lives outside Firebase on Neon, because Firebase has no relational
+database and the fee ledger genuinely needs one.
+
 ```
-(For a quick first demo you can substitute `--set-env-vars "DATABASE_URL=...,JWT_SECRET=..."`
-instead of Secret Manager — just don't leave it that way past the demo.)
-
-Note the service URL Cloud Run prints, e.g. `https://kampus-api-xxxxx-uc.a.run.app`.
-That's `NEXT_PUBLIC_API_URL` for the next step.
-
-## 3. Deploy the website and staff portal to Cloud Run
-
-```bash
-API_URL="https://kampus-api-xxxxx-uc.a.run.app"   # from step 2
-
-for app in web staff-portal; do
-  docker build -f apps/$app/Dockerfile \
-    --build-arg NEXT_PUBLIC_API_URL=$API_URL \
-    --build-arg NEXT_PUBLIC_SCHOOL_SUBDOMAIN=aspire-royal \
-    -t us-central1-docker.pkg.dev/YOUR_PROJECT_ID/kampus/$app .
-  docker push us-central1-docker.pkg.dev/YOUR_PROJECT_ID/kampus/$app
-  gcloud run deploy kampus-$app \
-    --image us-central1-docker.pkg.dev/YOUR_PROJECT_ID/kampus/$app \
-    --region us-central1 \
-    --allow-unauthenticated
-done
+  akampuz-web.web.app ───────────► Cloud Run: kampus-web
+  akampuz-staff-portal.web.app ──► Cloud Run: kampus-staff-portal
+  akampuz-parent.web.app ────────► Cloud Run: kampus-parent-app
+                                          │
+                                          ▼
+                                   Cloud Run: kampus-api ──► Neon Postgres
 ```
 
-`NEXT_PUBLIC_*` vars are baked in at build time, which is why the API must already
-be deployed before this step.
+## Setting up a fresh environment
 
-## 4. Front them with Firebase Hosting
+1. Create a Firebase project and upgrade it to **Blaze**.
+2. `npm i -g firebase-tools`, install the gcloud SDK, then `firebase login` and
+   `gcloud auth login`.
+3. Enable services:
+   ```bash
+   gcloud services enable run.googleapis.com artifactregistry.googleapis.com \
+     cloudbuild.googleapis.com secretmanager.googleapis.com
+   gcloud artifacts repositories create kampus \
+     --repository-format=docker --location=us-central1
+   ```
+4. Create a Postgres database at neon.tech and store the secrets:
+   ```bash
+   printf '%s' "<neon connection string>" | \
+     gcloud secrets create kampus-database-url --data-file=-
+   openssl rand -hex 32 | tr -d '\n' | \
+     gcloud secrets create kampus-jwt-secret --data-file=-
+   ```
+   Grant the Cloud Build/Run service account `roles/secretmanager.secretAccessor`
+   on both.
+5. Update `.firebaserc` with the project id, create the three Hosting sites, and
+   apply the targets (`web`, `staff-portal`, `parent-app`).
+6. Run the migration build, then the three service builds and deploys from the
+   "Redeploying" section above.
 
-```bash
-firebase hosting:sites:create kampus-web
-firebase hosting:sites:create kampus-staff-portal
-firebase hosting:sites:create kampus-mobile-web
-firebase target:apply hosting web kampus-web
-firebase target:apply hosting staff-portal kampus-staff-portal
-firebase target:apply hosting mobile-web kampus-mobile-web
-
-firebase deploy --only hosting:web,hosting:staff-portal
-```
-
-Your demo URLs: `https://kampus-web.web.app` and `https://kampus-staff-portal.web.app`.
-
-## 5. Parent app — browser demo build
-
-The Expo app isn't installable from a link the way a website is; for a client demo,
-export it to a static web build and host that as the third site:
-
-```bash
-cd apps/mobile
-EXPO_PUBLIC_API_URL=$API_URL npx expo export --platform web --output-dir dist
-cd ../..
-firebase deploy --only hosting:mobile-web
-```
-(`app.json`'s `extra.apiUrl` is the fallback if you don't override via env — update it
-to the deployed API URL directly if that's simpler for you.)
-
-For anything past a browser demo — letting your client actually install it on a
-phone — use `eas build` (see "Scaling up" below) instead of the web export.
-
-## 6. Give the client a login
-
-Seeded demo accounts (password `changeme` for everyone):
-- Parent app: phone `024 883 4000`
-- Staff portal (teacher): `abigail.bentil@aspireroyal.edu.gh`
-- Staff portal (admin): `collins.owusu@aspireroyal.edu.gh`
-
-Change these before this goes anywhere near a real client's data.
+Note: the sandbox this was built in has HTTPS-only egress, so migrations run
+through Cloud Build rather than connecting to Postgres directly. If your machine
+can reach Neon on 5432 you can just run `prisma migrate deploy` locally.
 
 ---
 
-## Scaling up — recommendations once the demo lands
+## Scaling up after the demo
 
-**Immediate hardening (before a second real demo, not just "someday")**
-- Rotate `JWT_SECRET` and all seeded passwords out of the demo defaults; move both
-  into Secret Manager if not already there.
-- Add `min-instances=1` on the API's Cloud Run service (`gcloud run services update kampus-api --min-instances=1`)
-  — Cloud Run scales to zero by default, so the first request after idle time eats
-  a multi-second cold start + a cold Postgres connection. Fine for a demo you're
-  driving live; bad for someone waiting on it unattended.
-- Add a `firebase.json` rewrite header block (`Cache-Control`) is not needed yet,
-  but do add `gcloud run services update --concurrency` tuning once you see real
-  traffic shape.
+**Already done:** secrets in Secret Manager, `min-instances=1` on the API, no
+default credentials anywhere, self-hosted fonts, PWA installability.
 
-**Multi-tenancy → the thing the schema was built for**
-- Wire actual subdomain routing (`<school>.kampus.app` → resolve tenant by host,
-  not by `NEXT_PUBLIC_SCHOOL_SUBDOMAIN`/login field) before onboarding school #2.
-  Firebase Hosting supports custom domains per site; Cloud Run + a small middleware
-  resolving `Host` → `schoolId` is the missing piece.
-- Per-tenant Postgres connection pooling matters once you're not on Neon's free
-  tier alone — look at PgBouncer (Neon includes pooled connections; Cloud SQL needs
-  its own).
+**Next, in the order a client will notice**
 
-**Database**
-- Neon's free tier is fine for a demo and even early pilot schools, but it sleeps
-  idle branches and caps storage/compute. When a real school's attendance/fee data
-  is on the line, move to Neon's paid tier or Cloud SQL for Postgres (same Prisma
-  schema, just change `DATABASE_URL` — no code change).
-- Turn on the fee ledger's implied recommendation from the design handoff: nightly
-  automated backups (Neon/Cloud SQL both do this, just confirm retention).
+1. **Real payment gateway.** Mobile money and card currently record a payment
+   without moving money. `POST /fees/children/:id/payments` should create the
+   payment as `PENDING`, return a checkout handle, and let the gateway's webhook
+   flip it to `SUCCESS` and write the ledger row — everything downstream already
+   reads from the ledger and needs no change. Hubtel and Paystack both cover
+   MTN/Vodafone/AirtelTigo plus cards in Ghana.
+2. **SMS.** The biggest adoption gap: parents without smartphones get nothing
+   today. Fee reminders, absence alerts and pickup codes over Hubtel or Arkesel
+   would let the school promise coverage for *every* parent.
+3. **Bulk import.** CSV/Excel import for pupils and guardians. Without it,
+   onboarding a 600-pupil school means 600 forms.
+4. **File uploads** via Firebase Storage — crest, staff photos, gallery. The
+   website shows dashed placeholders wherever imagery is missing.
+5. **Push notifications** via FCM, replacing the current read-on-open model.
+6. **Tests.** Start with `lib/fees.ts` (scholarship + discount + payment maths)
+   and the pickup-confirm flow.
+7. **CI.** A GitHub Action running the `cloudbuild/` configs on merge to `main`.
+8. **Subdomain-per-tenant routing** before school #2 — resolve `Host` → `schoolId`
+   rather than reading an env var. Firebase Hosting supports a custom domain per
+   site.
+9. **Academic-year rollover** — bulk promotion, archiving leavers, carrying
+   arrears forward. Needed before a school's second September.
 
-**The genuinely-open engineering items from PROGRESS.md, in rough priority order**
-1. Real Mobile Money/card payment gateway — the payment flow currently resolves
-   to `SUCCESS` synchronously; this is the one item a real client will notice fastest.
-2. Push notifications via **Firebase Cloud Messaging** — since you're already inside
-   Firebase, FCM is the natural fit for the parent app's pickup/grade/fee alerts
-   instead of the current poll-only `GET /notifications`.
-3. File uploads (school crest, staff photos, gallery, report-card PDF export) via
-   **Firebase Storage** or GCS — also a natural fit given the Firebase footprint.
-4. Test coverage — there is currently none. Start with the fee ledger math and the
-   pickup-code confirm flow; both are the kind of bug that's invisible in a demo
-   and expensive in production.
-5. CI/CD — a GitHub Action that builds+pushes the three images and redeploys on
-   merge to `main`, so "scale up" doesn't mean hand-running the steps in this file
-   forever.
+**Database.** Neon's free tier sleeps idle branches and caps compute — fine for
+demos and a pilot, but move to a paid tier or Cloud SQL once a real school's
+attendance and fee records depend on it. Same Prisma schema; only `DATABASE_URL`
+changes. Confirm backup retention either way.
 
-**Mobile distribution**
-- For anything beyond a browser demo: `eas build` (Expo Application Services) for
-  real iOS/Android builds, then TestFlight / Play Store internal testing before a
-  public store listing. This is a different pipeline from the web export above —
-  budget for Apple Developer ($99/yr) and Google Play ($25 one-time) accounts when
-  you're ready for that step.
+**Native apps.** `apps/mobile` holds a parked Expo shell (see its `PARKED.md`).
+When store presence is worth it, `eas build` → TestFlight / Play internal
+testing; budget for the Apple ($99/yr) and Google Play ($25) accounts. The API,
+shared types and design tokens all carry over unchanged.

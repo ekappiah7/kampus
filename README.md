@@ -6,8 +6,16 @@ portal — productized by JAKBRAIN Consult. This repo recreates the
 client) as real, multi-tenant applications backed by a shared Postgres
 database and API.
 
-See [PROGRESS.md](./PROGRESS.md) for what's implemented vs. still open, and
-[DEPLOY.md](./DEPLOY.md) for deploying a live demo to Firebase Hosting + Cloud Run.
+**Live:** [Staff Portal](https://akampuz-staff-portal.web.app) ·
+[Parent App](https://akampuz-parent.web.app) ·
+[Website](https://akampuz-web.web.app)
+
+The platform ships empty — a first-run wizard creates the school and its head
+administrator, and everything after that is entered by the school itself.
+
+- [DEMO.md](./DEMO.md) — running a client walkthrough
+- [PROGRESS.md](./PROGRESS.md) — what's built, and what isn't
+- [DEPLOY.md](./DEPLOY.md) — deployment runbook
 
 ## Structure (pnpm + turborepo monorepo)
 
@@ -15,13 +23,14 @@ See [PROGRESS.md](./PROGRESS.md) for what's implemented vs. still open, and
 apps/
   api/            Express + Prisma REST API — the single backend for all clients
   web/             Next.js marketing website
-  staff-portal/     Next.js staff/admin web app (teacher + admin + gate-staff roles)
-  mobile/            Expo (React Native) parent app
+  staff-portal/     Next.js staff/admin PWA (teacher + admin + gate-staff roles)
+  parent-app/        Next.js parent PWA (installable, offline app shell)
+  mobile/             parked Expo shell — see apps/mobile/PARKED.md
 packages/
-  db/                 Prisma schema, client, seed script
+  db/                 Prisma schema + client (no seed data by design)
   design-tokens/       Shared colors/typography/radii — Tailwind preset + RN theme
   shared-types/         Wire types shared between the API and its clients
-  api-client/            Typed fetch client used by web, staff-portal, and mobile
+  api-client/            Typed fetch client shared by all three front-ends
 ```
 
 ## Getting started
@@ -36,23 +45,19 @@ cp packages/db/.env.example packages/db/.env
 cp apps/api/.env.example apps/api/.env
 pnpm db:generate
 pnpm db:migrate
-pnpm db:seed        # seeds the Aspire Royal Academy reference tenant
+# No seed step — the platform starts empty by design.
 
 cp apps/web/.env.example apps/web/.env.local
 cp apps/staff-portal/.env.example apps/staff-portal/.env.local
+cp apps/staff-portal/.env.example apps/parent-app/.env.local
 
-pnpm dev             # runs all apps via turborepo (api :4000, web :3000, staff-portal :3001)
+# api :4000 · web :3000 · staff-portal :3001 · parent-app :3002
+pnpm dev
 ```
 
-Mobile app: `cd apps/mobile && pnpm dev` (Expo Go / simulator). Point
-`app.json`'s `extra.apiUrl` at your machine's LAN IP when testing on a
-physical device, since `localhost` won't resolve to your dev machine from a
-phone.
-
-Seeded login credentials (password `changeme` for all staff/parent accounts):
-- Parent: phone `024 883 4000`
-- Teacher: `abigail.bentil@aspireroyal.edu.gh`
-- Admin: `collins.owusu@aspireroyal.edu.gh`
+Then open the staff portal (`:3001`) and complete the setup wizard — it creates
+your school and signs you in as its head administrator. There are no default
+credentials, because there is no default data.
 
 ## Multi-tenancy
 

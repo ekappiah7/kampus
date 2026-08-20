@@ -1,0 +1,22 @@
+steps:
+  - name: node:20-bookworm
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        corepack enable
+        pnpm install --frozen-lockfile
+        pnpm --filter @kampus/db generate
+        # The schema changed substantially and the old migration history no longer
+        # exists, so reset rather than deploy. Safe here by design: the platform is
+        # meant to start empty and every record is created live during the demo.
+        pnpm --filter @kampus/db exec prisma migrate reset --force --skip-generate --skip-seed
+        pnpm --filter @kampus/db exec prisma migrate status
+    secretEnv: ["DATABASE_URL"]
+availableSecrets:
+  secretManager:
+    - versionName: projects/akampuz/secrets/kampus-database-url/versions/latest
+      env: "DATABASE_URL"
+options:
+  logging: CLOUD_LOGGING_ONLY

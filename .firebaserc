@@ -13,6 +13,9 @@
         ],
         "mobile-web": [
           "akampuz-mobile-web"
+        ],
+        "parent-app": [
+          "akampuz-parent"
         ]
       }
     }
