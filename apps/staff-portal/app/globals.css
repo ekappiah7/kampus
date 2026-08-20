@@ -1,9 +1,30 @@
-@import url("https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Manrope:wght@400;500;600;700&display=swap");
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  color-scheme: light;
+}
+
 body {
-  @apply bg-bg text-text-primary font-body;
+  @apply bg-[#F4F4F2] font-body text-[#22242A] antialiased;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade {
+  animation: fade-in 0.16s ease-out;
+}
+
+/* Grade-sheet inputs: compact, and clearly editable without heavy chrome. */
+.cell-input {
+  @apply w-[62px] rounded-[8px] border-[1.5px] border-border-alt px-2 py-1.5 text-center text-[13.5px] outline-none transition-colors focus:border-brand-link focus:bg-[#FFFDF5];
 }

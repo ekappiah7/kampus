@@ -1,63 +1,72 @@
 "use client";
 
-import { useState } from "react";
-import { useAuth } from "@/lib/auth-context";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { api } from "@/lib/api";
+import { useSession, homeFor } from "@/lib/session";
+import { Button, Field, inputClass } from "@/components/ui";
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, user, loading } = useSession();
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  async function onSubmit(e: React.FormEvent) {
+  useEffect(() => {
+    if (!loading && user) router.replace(homeFor(user.role));
+  }, [loading, user, router]);
+
+  useEffect(() => {
+    // If nobody has set the school up yet, sign-in is a dead end — send them to setup.
+    api.setup.status().then((s) => !s.initialised && router.replace("/setup")).catch(() => {});
+  }, [router]);
+
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setSubmitting(true);
+    setBusy(true);
     setError(null);
     try {
-      await login(email, password);
-    } catch {
-      setError("Invalid email or password.");
-    } finally {
-      setSubmitting(false);
+      await login(email.trim(), password);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not sign you in.");
+      setBusy(false);
     }
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-6">
-      <form onSubmit={onSubmit} className="w-full max-w-sm rounded-card-lg border border-border-alt bg-white p-8 shadow-card">
-        <h1 className="font-display text-2xl font-bold">Staff Portal</h1>
-        <p className="mt-1 text-sm text-text-muted">Sign in to Aspire Royal Academy</p>
+    <main className="flex min-h-screen items-center justify-center px-6 py-12">
+      <div className="w-full max-w-sm">
+        <div className="mb-7 text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-[16px] bg-brand text-2xl">🏫</div>
+          <h1 className="font-display text-[24px] font-bold">Staff Portal</h1>
+          <p className="mt-1 text-sm text-text-muted">Sign in to continue</p>
+        </div>
 
-        <label className="mt-6 block text-sm font-medium text-text-secondary">Email</label>
-        <input
-          type="email"
-          required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="mt-1 w-full rounded-chip border border-border-alt px-3 py-2 outline-none focus:border-brand-link"
-          placeholder="abigail.bentil@aspireroyal.edu.gh"
-        />
+        <form onSubmit={submit} className="flex flex-col gap-4 rounded-[18px] bg-white p-7 shadow-card">
+          <Field label="Email">
+            <input className={inputClass} type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+          </Field>
+          <Field label="Password">
+            <input className={inputClass} type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+          </Field>
 
-        <label className="mt-4 block text-sm font-medium text-text-secondary">Password</label>
-        <input
-          type="password"
-          required
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="mt-1 w-full rounded-chip border border-border-alt px-3 py-2 outline-none focus:border-brand-link"
-        />
+          {error && <p className="rounded-[10px] bg-danger-tint px-3.5 py-2.5 text-[13px] font-medium text-danger">{error}</p>}
 
-        {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+          <Button type="submit" className="!py-3.5" disabled={busy}>
+            {busy ? "Signing in…" : "Sign in"}
+          </Button>
+        </form>
 
-        <button
-          type="submit"
-          disabled={submitting}
-          className="mt-6 w-full rounded-pill bg-dark-pill py-2.5 font-semibold text-brand disabled:opacity-60"
-        >
-          {submitting ? "Signing in…" : "Sign in"}
-        </button>
-      </form>
-    </div>
+        <p className="mt-6 text-center text-[13px] leading-relaxed text-text-muted">
+          New staff member?{" "}
+          <Link href="/redeem" className="font-bold text-brand-link">
+            Use your access code
+          </Link>
+        </p>
+      </div>
+    </main>
   );
 }

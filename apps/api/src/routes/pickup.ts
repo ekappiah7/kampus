@@ -8,7 +8,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 export const pickupRouter = Router();
 pickupRouter.use(requireAuth);
 
-const nanoid = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 6);
+const nanoid = customAlphabet("ABCDEFGHJKMNPQRSTUVWXYZ23456789", 6);
 
 function toView(n: {
   id: string;
@@ -16,6 +16,7 @@ function toView(n: {
   relation: string;
   code: string;
   status: "PENDING" | "CONFIRMED";
+  pickupTime: string | null;
   createdAt: Date;
   confirmedAt: Date | null;
   student: { name: string };
@@ -27,6 +28,7 @@ function toView(n: {
     relation: n.relation,
     code: n.code,
     status: n.status,
+    pickupTime: n.pickupTime,
     createdAt: n.createdAt.toISOString(),
     confirmedAt: n.confirmedAt?.toISOString() ?? null,
   };
@@ -36,6 +38,7 @@ const createSchema = z.object({
   studentId: z.string(),
   pickupPersonName: z.string().min(1),
   relation: z.enum(["Parent", "Family member", "Guardian", "Other"]),
+  pickupTime: z.string().optional(),
 });
 
 /** Parent submits a pickup notice — generates the one-time code shown in the app. */
@@ -54,7 +57,8 @@ pickupRouter.post("/", requireRole("parent"), async (req, res) => {
       requestedByParentId: req.auth!.id,
       pickupPersonName: parsed.data.pickupPersonName,
       relation: parsed.data.relation,
-      code: nanoid(),
+      pickupTime: parsed.data.pickupTime,
+      code: `PK-${nanoid()}`,
     },
     include: { student: true },
   });

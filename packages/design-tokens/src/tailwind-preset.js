@@ -25,8 +25,10 @@ module.exports = {
         "tint-green": "#E9F7EE",
       },
       fontFamily: {
-        display: ["Fredoka", "sans-serif"],
-        body: ["Manrope", "system-ui", "sans-serif"],
+        // var(--font-display/body) are supplied by next/font in each app's layout;
+        // the literal names are a fallback for any surface not using next/font.
+        display: ["var(--font-display)", "Fredoka", "sans-serif"],
+        body: ["var(--font-body)", "Manrope", "system-ui", "sans-serif"],
       },
       borderRadius: {
         pill: "100px",

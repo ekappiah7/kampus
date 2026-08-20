@@ -2,18 +2,29 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@/lib/auth-context";
+import { api } from "@/lib/api";
+import { useSession, homeFor } from "@/lib/session";
 
+/** Routes to setup, sign-in, or the role's home depending on system + session state. */
 export default function IndexPage() {
-  const { user, loading } = useAuth();
+  const { user, loading } = useSession();
   const router = useRouter();
 
   useEffect(() => {
     if (loading) return;
-    if (!user) return router.replace("/login");
-    if (user.role === "gate-staff") return router.replace("/pickup-desk");
-    router.replace(user.role === "admin" ? "/manage" : "/roster");
+    if (user) {
+      router.replace(homeFor(user.role));
+      return;
+    }
+    api.setup
+      .status()
+      .then((s) => router.replace(s.initialised ? "/login" : "/setup"))
+      .catch(() => router.replace("/login"));
   }, [loading, user, router]);
 
-  return null;
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-border border-t-brand-link" />
+    </div>
+  );
 }

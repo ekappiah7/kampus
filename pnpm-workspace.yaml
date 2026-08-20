@@ -1,3 +1,8 @@
 packages:
-  - "apps/*"
+  - "apps/api"
+  - "apps/web"
+  - "apps/staff-portal"
+  - "apps/parent-app"
   - "packages/*"
+  # apps/mobile is parked — see apps/mobile/PARKED.md. It is deliberately excluded
+  # from the workspace so a stale native scaffold can't break builds or CI.

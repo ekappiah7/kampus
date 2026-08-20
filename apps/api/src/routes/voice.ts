@@ -1,55 +1,57 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "@kampus/db";
-import type { ParentVoiceView } from "@kampus/shared-types";
 import { requireAuth, requireRole } from "../middleware/auth";
 
 export const voiceRouter = Router();
-voiceRouter.use(requireAuth);
+voiceRouter.use(requireAuth, requireRole("parent"));
 
 const submitSchema = z.object({
   category: z.enum(["SUGGESTION", "COMPLAINT", "HONOUR_A_TEACHER", "GENERAL"]),
   aboutStaffName: z.string().optional(),
-  message: z.string().min(1),
+  message: z.string().min(4, "Please write a short message"),
 });
 
-voiceRouter.post("/", requireRole("parent"), async (req, res) => {
+/** Parent Voice from inside the app — identity comes from the session. */
+voiceRouter.post("/", async (req, res) => {
   const parsed = submitSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const submission = await prisma.parentVoiceSubmission.create({
-    data: { schoolId: req.auth!.schoolId, parentId: req.auth!.id, ...parsed.data },
+    data: {
+      schoolId: req.auth!.schoolId,
+      parentId: req.auth!.id,
+      authorName: req.auth!.name,
+      ...parsed.data,
+    },
   });
   res.status(201).json(submission);
 });
 
-/** Admin inbox — suggestions/complaints/honours from parents across the school. */
-voiceRouter.get("/inbox", requireRole("admin"), async (req, res) => {
+/** A parent's own submissions, so they can see whether the school replied. */
+voiceRouter.get("/mine", async (req, res) => {
   const submissions = await prisma.parentVoiceSubmission.findMany({
-    where: { schoolId: req.auth!.schoolId },
-    include: { parent: true },
+    where: { parentId: req.auth!.id },
     orderBy: { createdAt: "desc" },
   });
-  const view: ParentVoiceView[] = submissions.map((s) => ({
-    id: s.id,
-    category: s.category,
-    message: s.message,
-    from: s.parent.name,
-    resolved: s.resolved,
-    createdAt: s.createdAt.toISOString(),
-  }));
-  res.json(view);
+  res.json(
+    submissions.map((s) => ({
+      id: s.id,
+      category: s.category,
+      message: s.message,
+      resolved: s.resolved,
+      adminResponse: s.adminResponse,
+      createdAt: s.createdAt.toISOString(),
+    })),
+  );
 });
 
-const respondSchema = z.object({ resolved: z.boolean().optional(), adminResponse: z.string().optional() });
-
-voiceRouter.patch("/:id", requireRole("admin"), async (req, res) => {
-  const parsed = respondSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-
-  const updated = await prisma.parentVoiceSubmission.update({
-    where: { id: req.params.id },
-    data: { ...parsed.data, respondedByStaffId: parsed.data.adminResponse ? req.auth!.id : undefined },
+/** Staff names a parent can credit in an "Honour a teacher" submission. */
+voiceRouter.get("/staff-list", async (req, res) => {
+  const staff = await prisma.staff.findMany({
+    where: { schoolId: req.auth!.schoolId, status: "ACTIVE" },
+    select: { id: true, name: true, title: true },
+    orderBy: { name: "asc" },
   });
-  res.json(updated);
+  res.json(staff);
 });

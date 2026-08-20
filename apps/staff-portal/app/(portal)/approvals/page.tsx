@@ -2,64 +2,74 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { PageHeader } from "@/components/PageHeader";
-import { Card } from "@/components/Card";
+import { Button, Card, EmptyState, PageHeader, Skeleton, useToast } from "@/components/ui";
 
 interface Approval {
   id: string;
   title: string;
   body: string;
+  kind: string;
+  className: string;
+  authorName: string;
   createdAt: string;
-  author: { name: string };
 }
 
 export default function ApprovalsPage() {
-  const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [items, setItems] = useState<Approval[] | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const { toast, toastNode } = useToast();
 
-  function refresh() {
-    api.staff.approvals().then((r) => setApprovals(r as Approval[]));
+  function load() {
+    api.staff.approvals().then((a) => setItems(a as Approval[])).catch(() => setItems([]));
   }
-  useEffect(refresh, []);
+  useEffect(load, []);
 
-  async function approve(id: string) {
-    await api.staff.approve(id);
-    refresh();
-  }
-  async function reject(id: string) {
-    await api.staff.reject(id);
-    refresh();
+  async function act(id: string, action: "approve" | "reject") {
+    setBusyId(id);
+    try {
+      if (action === "approve") await api.staff.approve(id);
+      else await api.staff.reject(id);
+      toast({ kind: "ok", text: action === "approve" ? "Approved — parents notified" : "Rejected" });
+      load();
+    } catch (e) {
+      toast({ kind: "err", text: e instanceof Error ? e.message : "Could not update." });
+    } finally {
+      setBusyId(null);
+    }
   }
 
   return (
     <>
       <PageHeader title="Pending Approvals" subtitle="Teacher posts awaiting your review before parents see them" />
-      {approvals.length === 0 ? (
-        <Card className="text-center text-text-muted">All caught up — no posts awaiting review.</Card>
-      ) : (
-        <div className="flex flex-col gap-4">
-          {approvals.map((a) => (
-            <Card key={a.id}>
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="font-semibold">{a.title}</p>
-                  <p className="mt-1 text-sm text-text-secondary">{a.body}</p>
-                  <p className="mt-2 text-xs text-text-muted">
-                    {a.author.name} · {new Date(a.createdAt).toLocaleDateString()}
-                  </p>
-                </div>
-                <div className="flex shrink-0 gap-2">
-                  <button onClick={() => approve(a.id)} className="rounded-pill bg-brand px-4 py-1.5 text-xs font-semibold text-text-primary">
-                    Approve
-                  </button>
-                  <button onClick={() => reject(a.id)} className="rounded-pill border border-border px-4 py-1.5 text-xs font-semibold">
-                    Reject
-                  </button>
-                </div>
+
+      {!items && <Skeleton rows={3} />}
+      {items && items.length === 0 && <EmptyState icon="✅" title="All caught up — no posts awaiting review." />}
+
+      {items && items.length > 0 && (
+        <div className="flex flex-col gap-3">
+          {items.map((a) => (
+            <Card key={a.id} className="p-5">
+              <div className="mb-1.5 flex flex-wrap items-start justify-between gap-2">
+                <span className="text-[14.5px] font-bold">{a.title}</span>
+                <span className="text-[11.5px] text-text-muted">
+                  {new Date(a.createdAt).toLocaleDateString("en-GB")} · by {a.authorName} · {a.className}
+                </span>
+              </div>
+              <p className="mb-3.5 whitespace-pre-wrap text-[13.5px] leading-[1.5] text-[#6B6F76]">{a.body}</p>
+              <div className="flex gap-2.5">
+                <Button onClick={() => act(a.id, "approve")} disabled={busyId === a.id} className="!rounded-pill">
+                  Approve
+                </Button>
+                <Button variant="ghost" onClick={() => act(a.id, "reject")} disabled={busyId === a.id} className="!rounded-pill">
+                  Reject
+                </Button>
               </div>
             </Card>
           ))}
         </div>
       )}
+
+      {toastNode}
     </>
   );
 }

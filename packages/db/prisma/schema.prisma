@@ -18,11 +18,17 @@ datasource db {
 model School {
   id            String   @id @default(cuid())
   name          String
+  shortName     String? // used in the staff portal sidebar, e.g. "Aspire Royal Staff"
   subdomain     String   @unique
   primaryColor  String   @default("#FFC629")
   logoUrl       String?
   whatsappPhone String?
+  phone         String?
+  email         String?
+  address       String?
+  officeHours   String?
   accreditation String?
+  gesRegNo      String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -30,17 +36,24 @@ model School {
   // own About/Admissions/Safety copy without a schema change per client.
   content SchoolContent?
 
-  classes       Class[]
-  students      Student[]
-  parents       Parent[]
-  staff         Staff[]
-  terms         Term[]
-  feeLineItems  FeeLineItem[]
-  events        Event[]
-  cafeteriaMenu CafeteriaMenuItem[]
-  testimonials  Testimonial[]
-  voiceInbox    ParentVoiceSubmission[]
-  notifications Notification[]
+  classes            Class[]
+  students           Student[]
+  parents            Parent[]
+  staff              Staff[]
+  terms              Term[]
+  feeLineItems       FeeLineItem[]
+  events             Event[]
+  cafeteriaMenu      CafeteriaMenuItem[]
+  testimonials       Testimonial[]
+  voiceInbox         ParentVoiceSubmission[]
+  notifications      Notification[]
+  programmes         Programme[]
+  safetyPolicies     SafetyPolicy[]
+  trustBadges        TrustBadge[]
+  admissionSteps     AdmissionStep[]
+  admissionInquiries AdmissionInquiry[]
+  galleryImages      GalleryImage[]
+  auditLogs          AuditLog[]
 
   @@map("schools")
 }
@@ -49,17 +62,140 @@ model SchoolContent {
   id                 String  @id @default(cuid())
   schoolId           String  @unique
   school             School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  heroEyebrow        String?
   heroHeadline       String?
   heroSubcopy        String?
+  aboutEyebrow       String?
+  aboutHeading       String?
   aboutText          String?
+  aboutTextSecondary String?
+  missionText        String?
+  visionText         String?
+  academicsHeading   String?
+  academicsSubcopy   String?
+  admissionsHeading  String?
   admissionsText     String?
-  safetyPickupPolicy String?
+  safetyHeading      String?
+  safetySubcopy      String?
+  feesNote           String?
+  voiceText          String?
+  footerBlurb        String?
   statsStudents      Int?
   statsTeachers      Int?
   statsYears         Int?
-  jhsComingSoon      Boolean @default(true)
+  teacherRatio       String? // e.g. "1:14 teacher-to-pupil ratio"
+  maxClassSize       String? // e.g. "Max 24 pupils per class"
 
   @@map("school_content")
+}
+
+/// Academic programme cards on the public site (Crèche, Nursery & KG, Primary, JHS…).
+model Programme {
+  id          String  @id @default(cuid())
+  schoolId    String
+  school      School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  name        String
+  ageRange    String?
+  description String?
+  icon        String? // emoji
+  tint        String? // card icon tile background
+  comingSoon  Boolean @default(false)
+  order       Int     @default(0)
+
+  @@index([schoolId])
+  @@map("programmes")
+}
+
+/// Safety & wellbeing policy cards on the public site.
+model SafetyPolicy {
+  id          String  @id @default(cuid())
+  schoolId    String
+  school      School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  icon        String?
+  order       Int     @default(0)
+
+  @@index([schoolId])
+  @@map("safety_policies")
+}
+
+/// "Why families trust us" pills — accreditation number, ratios, class caps.
+model TrustBadge {
+  id       String  @id @default(cuid())
+  schoolId String
+  school   School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  label    String
+  icon     String?
+  order    Int     @default(0)
+
+  @@index([schoolId])
+  @@map("trust_badges")
+}
+
+model AdmissionStep {
+  id          String  @id @default(cuid())
+  schoolId    String
+  school      School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  order       Int     @default(0)
+
+  @@index([schoolId])
+  @@map("admission_steps")
+}
+
+enum InquiryStatus {
+  NEW
+  CONTACTED
+  ENROLLED
+  CLOSED
+}
+
+/// Lead captured by the website's "Request Information" form.
+model AdmissionInquiry {
+  id              String        @id @default(cuid())
+  schoolId        String
+  school          School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  parentName      String
+  phone           String
+  childAge        String?
+  interestedLevel String?
+  message         String?
+  status          InquiryStatus @default(NEW)
+  createdAt       DateTime      @default(now())
+
+  @@index([schoolId, status])
+  @@map("admission_inquiries")
+}
+
+model GalleryImage {
+  id       String  @id @default(cuid())
+  schoolId String
+  school   School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  url      String
+  caption  String?
+  order    Int     @default(0)
+
+  @@index([schoolId])
+  @@map("gallery_images")
+}
+
+/// Append-only record of sensitive admin actions (grade edits, discounts, fee confirmations).
+model AuditLog {
+  id        String   @id @default(cuid())
+  schoolId  String
+  school    School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  actorType String // "staff" | "parent" | "system"
+  actorId   String?
+  actorName String?
+  action    String // "grade.update", "discount.apply", "payment.confirm", ...
+  entity    String? // "student:abc123"
+  detail    String?
+  createdAt DateTime @default(now())
+
+  @@index([schoolId, createdAt])
+  @@map("audit_logs")
 }
 
 enum StaffRole {
@@ -69,19 +205,24 @@ enum StaffRole {
 }
 
 model Staff {
-  id            String      @id @default(cuid())
-  schoolId      String
-  school        School      @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  name          String
-  email         String
-  passwordHash  String
-  role          StaffRole
-  title         String? // e.g. "Class Teacher", "Head Teacher & Administrator"
-  phone         String?
-  status        StaffStatus @default(ACTIVE)
-  classId       String? // set when role = TEACHER and assigned as class teacher
-  homeroomClass Class?      @relation("ClassTeacher", fields: [classId], references: [id])
-  createdAt     DateTime    @default(now())
+  id              String      @id @default(cuid())
+  schoolId        String
+  school          School      @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  name            String
+  email           String
+  /// Null until the member redeems their access code and sets a password.
+  passwordHash    String?
+  /// One-time code issued by admin; cleared once redeemed.
+  accessCode      String?     @unique
+  mustSetPassword Boolean     @default(true)
+  role            StaffRole
+  title           String? // e.g. "Class Teacher", "Head Teacher & Administrator"
+  phone           String?
+  photoUrl        String?
+  status          StaffStatus @default(ACTIVE)
+  classId         String? // set when role = TEACHER and assigned as class teacher
+  homeroomClass   Class?      @relation("ClassTeacher", fields: [classId], references: [id])
+  createdAt       DateTime    @default(now())
 
   postsAuthored         Post[]                  @relation("PostAuthor")
   postsApproved         Post[]                  @relation("PostApprover")
@@ -106,14 +247,18 @@ enum StaffStatus {
 }
 
 model Parent {
-  id           String   @id @default(cuid())
-  schoolId     String
-  school       School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  name         String
-  email        String?
-  phone        String
-  passwordHash String
-  createdAt    DateTime @default(now())
+  id              String   @id @default(cuid())
+  schoolId        String
+  school          School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  name            String
+  email           String?
+  phone           String
+  /// Null until the parent redeems their access code and sets a password.
+  passwordHash    String?
+  /// One-time code issued by admin; cleared once redeemed.
+  accessCode      String?  @unique
+  mustSetPassword Boolean  @default(true)
+  createdAt       DateTime @default(now())
 
   children          ParentStudent[]
   pickupNoticesSent PickupNotice[]          @relation("PickupRequestedBy")
@@ -193,6 +338,7 @@ model Term {
   feeCharges        StudentFeeCharge[]
   ledgerEntries     FeeLedgerEntry[]
   discounts         Discount[]
+  reportCards       ReportCard[]
 
   @@unique([schoolId, name, academicYear])
   @@index([schoolId])
@@ -200,17 +346,20 @@ model Term {
 }
 
 model Student {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   schoolId       String
-  school         School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  school         School    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   classId        String
-  class          Class    @relation(fields: [classId], references: [id])
+  class          Class     @relation(fields: [classId], references: [id])
   name           String
   admissionNo    String?
   avatarInitials String?
   avatarColor    String?
-  active         Boolean  @default(true)
-  createdAt      DateTime @default(now())
+  active         Boolean   @default(true)
+  /// "★ Monitored" flag from the roster design — pupils needing extra attention.
+  monitored      Boolean   @default(false)
+  dateOfBirth    DateTime? @db.Date
+  createdAt      DateTime  @default(now())
 
   guardians         ParentStudent[]
   attendance        AttendanceRecord[]
@@ -222,6 +371,7 @@ model Student {
   ledgerEntries     FeeLedgerEntry[]
   pickupNotices     PickupNotice[]
   payments          Payment[]
+  reportCards       ReportCard[]
 
   @@index([schoolId, classId])
   @@map("students")
@@ -266,6 +416,33 @@ enum AssessmentType {
   END_OF_TERM_EXAM
 }
 
+/// Per-term report card envelope: teacher/head remarks, attendance summary, position.
+/// Subject scores are computed from AssessmentEntry; this holds only the human parts.
+model ReportCard {
+  id                String    @id @default(cuid())
+  studentId         String
+  student           Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  termId            String
+  term              Term      @relation(fields: [termId], references: [id], onDelete: Cascade)
+  teacherRemark     String?
+  headTeacherRemark String?
+  conduct           String?
+  attitude          String?
+  interest          String?
+  /// Cached at publish time so a reprinted card always matches what was issued.
+  classPosition     Int?
+  classSize         Int?
+  published         Boolean   @default(false)
+  publishedAt       DateTime?
+  nextTermBegins    DateTime? @db.Date
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([studentId, termId])
+  @@index([termId])
+  @@map("report_cards")
+}
+
 /// One weighted component of a subject's grade for a term. Final grade = weighted rollup of these.
 model AssessmentEntry {
   id               String         @id @default(cuid())
@@ -298,6 +475,11 @@ enum PostKind {
   ANNOUNCEMENT
 }
 
+enum PostAudience {
+  WHOLE_SCHOOL
+  BY_LEVEL
+}
+
 enum PostStatus {
   PENDING
   APPROVED
@@ -305,22 +487,25 @@ enum PostStatus {
 }
 
 model Post {
-  id                String     @id @default(cuid())
+  id                String       @id @default(cuid())
   schoolId          String
   kind              PostKind
+  audience          PostAudience @default(BY_LEVEL)
   classId           String? // null = school-wide (admin announcements)
-  class             Class?     @relation(fields: [classId], references: [id])
+  class             Class?       @relation(fields: [classId], references: [id])
   subject           String? // free-text subject label for homework, e.g. "MATHEMATICS"
+  /// Category pill shown in the parent app — PTA / ACADEMIC / EVENT / HEALTH.
+  tag               String?
   title             String
   body              String
-  dueDate           DateTime?  @db.Date
+  dueDate           DateTime?    @db.Date
   authorStaffId     String
-  author            Staff      @relation("PostAuthor", fields: [authorStaffId], references: [id])
-  status            PostStatus @default(PENDING)
+  author            Staff        @relation("PostAuthor", fields: [authorStaffId], references: [id])
+  status            PostStatus   @default(PENDING)
   approvedByStaffId String?
-  approver          Staff?     @relation("PostApprover", fields: [approvedByStaffId], references: [id])
+  approver          Staff?       @relation("PostApprover", fields: [approvedByStaffId], references: [id])
   publishedAt       DateTime?
-  createdAt         DateTime   @default(now())
+  createdAt         DateTime     @default(now())
 
   studentStatuses PostStudentStatus[]
 
@@ -466,16 +651,19 @@ enum PaymentStatus {
 }
 
 model Payment {
-  id        String        @id @default(cuid())
-  studentId String
-  student   Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  parentId  String
-  parent    Parent        @relation(fields: [parentId], references: [id])
-  amount    Float
-  method    PaymentMethod
-  status    PaymentStatus @default(PENDING)
-  reference String? // gateway transaction reference
-  createdAt DateTime      @default(now())
+  id                 String        @id @default(cuid())
+  studentId          String
+  student            Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  parentId           String?
+  parent             Parent?       @relation(fields: [parentId], references: [id])
+  amount             Float
+  method             PaymentMethod
+  status             PaymentStatus @default(PENDING)
+  reference          String? // gateway transaction reference, or the cash-at-office code
+  /// Cash payments start PENDING and are confirmed at the office by a staff member.
+  confirmedByStaffId String?
+  confirmedAt        DateTime?
+  createdAt          DateTime      @default(now())
 
   ledgerEntry FeeLedgerEntry?
 
@@ -529,6 +717,8 @@ model PickupNotice {
   requestedByParent   Parent       @relation("PickupRequestedBy", fields: [requestedByParentId], references: [id])
   pickupPersonName    String
   relation            String // "Parent", "Family member", "Guardian", "Other"
+  /// Free text as entered by the parent, e.g. "2:30pm".
+  pickupTime          String?
   code                String       @unique // one-time pickup code
   status              PickupStatus @default(PENDING)
   confirmedByStaffId  String?
@@ -553,11 +743,14 @@ enum VoiceCategory {
 }
 
 model ParentVoiceSubmission {
-  id                 String        @id @default(cuid())
-  schoolId           String
-  school             School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  parentId           String
-  parent             Parent        @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  schoolId String
+  school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  /// Null when submitted from the public website by someone without an account.
+  parentId String?
+  parent   Parent? @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  /// Name as given on the public form; for app submissions this mirrors the parent's name.
+  authorName         String?
   category           VoiceCategory
   aboutStaffName     String? // free text — who the honour/complaint is about, if applicable
   message            String
@@ -668,6 +861,7 @@ model Message {
   senderParentId String?
   senderParent   Parent?       @relation("MessageSenderParent", fields: [senderParentId], references: [id])
   body           String
+  readAt         DateTime?
   createdAt      DateTime      @default(now())
 
   @@index([threadId])
