@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GradeSheet } from "@kampus/shared-types";
 import { api } from "@/lib/api";
+import type { MarkSheetImportReport } from "@kampus/api-client";
 import { Badge, Button, Card, EmptyState, ErrorState, Field, Modal, PageHeader, Skeleton, inputClass, useToast } from "@/components/ui";
 
 const TYPES = [
@@ -30,6 +31,7 @@ export default function GradesPage() {
   const [saving, setSaving] = useState(false);
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ type: "CLASSWORK", label: "", weightPct: 20, maxScore: 100 });
+  const [sheetModal, setSheetModal] = useState(false);
   const { toast, toastNode } = useToast();
 
   useEffect(() => {
@@ -92,6 +94,19 @@ export default function GradesPage() {
     }
   }
 
+  /** An assessment added at the wrong weight, or twice, has to be removable. */
+  async function removeComponent(componentKey: string, label: string) {
+    if (!sheet?.subject) return;
+    if (!window.confirm(`Remove "${label}" from ${sheet.subject.name}?\n\nEvery score recorded under it goes too.`)) return;
+    try {
+      const r = await api.staff.removeComponent(sheet.subject.id, componentKey);
+      toast({ kind: "ok", text: `${label} removed (${r.removed} score row(s))` });
+      load();
+    } catch (err) {
+      toast({ kind: "err", text: err instanceof Error ? err.message : "Could not remove that assessment." });
+    }
+  }
+
   async function addComponent(e: React.FormEvent) {
     e.preventDefault();
     if (!sheet?.subject) return;
@@ -114,7 +129,10 @@ export default function GradesPage() {
         subtitle={sheet ? `${sheet.class.name} · ${sheet.term.name}, ${sheet.term.academicYear}` : "Continuous assessment"}
         action={
           sheet?.subject ? (
-            <div className="flex gap-2.5">
+            <div className="flex flex-wrap gap-2.5">
+              <Button variant="ghost" onClick={() => setSheetModal(true)}>
+                Mark sheet
+              </Button>
               <Button variant="ghost" onClick={() => setAdding(true)}>
                 + Assessment
               </Button>
@@ -192,11 +210,18 @@ export default function GradesPage() {
                 <tr className="bg-bg text-left">
                   <th className="sticky left-0 z-10 bg-bg px-5 py-3.5 text-[12.5px] font-bold text-text-muted">PUPIL</th>
                   {sheet.components.map((c) => (
-                    <th key={c.key} className="px-3 py-3.5 text-center text-[12.5px] font-bold text-text-muted">
+                    <th key={c.key} className="group px-3 py-3.5 text-center text-[12.5px] font-bold text-text-muted">
                       <span className="block">{c.label.toUpperCase()}</span>
                       <span className="block text-[10.5px] font-semibold text-[#B0B4BA]">
                         {c.weightPct}% · /{c.maxScore}
                       </span>
+                      <button
+                        onClick={() => removeComponent(c.key, c.label)}
+                        title={`Remove ${c.label}`}
+                        className="mt-0.5 text-[10.5px] font-bold text-[#C9CCD1] opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"
+                      >
+                        remove
+                      </button>
                     </th>
                   ))}
                   <th className="px-4 py-3.5 text-center text-[12.5px] font-bold text-text-muted">FINAL</th>
@@ -303,7 +328,226 @@ export default function GradesPage() {
         </Modal>
       )}
 
+      {sheetModal && sheet?.subject && (
+        <MarkSheetModal
+          classId={sheet.class.id}
+          subjectId={sheet.subject.id}
+          subjectName={sheet.subject.name}
+          className={sheet.class.name}
+          onClose={() => setSheetModal(false)}
+          onImported={() => {
+            setSheetModal(false);
+            load();
+            toast({ kind: "ok", text: "Marks imported from the spreadsheet" });
+          }}
+        />
+      )}
+
       {toastNode}
     </>
   );
 }
+
+/**
+ * The offline route into the mark book.
+ *
+ * Teachers here mark at home, and most of them are quicker in Excel than in any web
+ * grid. So: download the class's own sheet, fill it on a laptop with no internet,
+ * bring it back. The upload never writes on the first pass — it reports what would
+ * change and waits, because a teacher who grabs the wrong file should find out from
+ * a summary rather than from a term of marks quietly overwritten.
+ */
+function MarkSheetModal({
+  classId,
+  subjectId,
+  subjectName,
+  className,
+  onClose,
+  onImported,
+}: {
+  classId: string;
+  subjectId: string;
+  subjectName: string;
+  className: string;
+  onClose: () => void;
+  onImported: () => void;
+}) {
+  const [busy, setBusy] = useState<null | "download" | "preview" | "commit" | "broadsheet">(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [report, setReport] = useState<MarkSheetImportReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run<T>(kind: NonNullable<typeof busy>, fn: () => Promise<T>): Promise<T | undefined> {
+    setBusy(kind);
+    setError(null);
+    try {
+      return await fn();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+      return undefined;
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function preview(f: File) {
+    setFile(f);
+    setReport(null);
+    const r = await run("preview", () => api.staff.importMarkSheet(f, { classId, subjectId }));
+    if (r) setReport(r);
+  }
+
+  async function commit() {
+    if (!file) return;
+    const r = await run("commit", () => api.staff.importMarkSheet(file, { classId, subjectId, commit: true }));
+    if (r?.committed) onImported();
+  }
+
+  const blocked = (report?.outOfRange.length ?? 0) > 0;
+
+  return (
+    <Modal title="Mark sheet" onClose={onClose}>
+      <div className="flex flex-col gap-5">
+        <section className="flex flex-col gap-2.5">
+          <p className="text-[13px] font-bold uppercase tracking-wide text-text-muted">1 · Download</p>
+          <p className="text-[13.5px] leading-relaxed text-text-secondary">
+            An Excel file for <strong>{className} — {subjectName}</strong>, with your pupils and your assessment columns already
+            in it. Fill it in anywhere, online or not.
+          </p>
+          <div className="flex flex-wrap gap-2.5">
+            <Button
+              variant="gold"
+              disabled={busy !== null}
+              onClick={() => run("download", () => api.staff.markSheetTemplate(classId, subjectId))}
+            >
+              {busy === "download" ? "Preparing…" : "Download mark sheet"}
+            </Button>
+            <Button variant="ghost" disabled={busy !== null} onClick={() => run("broadsheet", () => api.staff.broadsheet(classId))}>
+              {busy === "broadsheet" ? "Preparing…" : "Class broadsheet"}
+            </Button>
+          </div>
+          <p className="text-[12px] leading-relaxed text-text-muted">
+            The broadsheet is every subject for the whole class, with averages and positions — for the end-of-term meeting, not
+            for uploading back.
+          </p>
+        </section>
+
+        <section className="flex flex-col gap-2.5 border-t border-border pt-5">
+          <p className="text-[13px] font-bold uppercase tracking-wide text-text-muted">2 · Upload it back</p>
+          <label className="flex cursor-pointer flex-col items-center gap-1.5 rounded-[14px] border-2 border-dashed border-border-alt bg-bg px-4 py-6 text-center hover:border-brand">
+            <span className="text-xl opacity-50">📄</span>
+            <span className="text-[13.5px] font-bold text-text-primary">{file ? file.name : "Choose the filled-in file"}</span>
+            <span className="text-[12px] text-text-muted">.xlsx or .csv · nothing is saved until you confirm</span>
+            <input
+              type="file"
+              accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void preview(f);
+              }}
+            />
+          </label>
+          {busy === "preview" && <p className="text-[13px] font-semibold text-text-muted">Reading the file…</p>}
+        </section>
+
+        {error && <p className="rounded-[10px] bg-danger-tint px-3.5 py-2.5 text-[13px] font-medium text-danger">{error}</p>}
+
+        {report && (
+          <section className="flex flex-col gap-3 border-t border-border pt-5">
+            <p className="text-[13px] font-bold uppercase tracking-wide text-text-muted">3 · Check, then save</p>
+
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { label: "To change", value: report.changeCount, tone: "#22242A" },
+                { label: "Unchanged", value: report.unchanged, tone: "#6B6F76" },
+                { label: "Problems", value: report.outOfRange.length + report.unmatchedPupils.length + report.unmatchedColumns.length, tone: "#C74747" },
+              ].map((s) => (
+                <div key={s.label} className="rounded-[12px] bg-bg px-3 py-2.5 text-center">
+                  <p className="font-display text-[20px] font-bold" style={{ color: s.tone }}>
+                    {s.value}
+                  </p>
+                  <p className="text-[11.5px] font-semibold text-text-muted">{s.label}</p>
+                </div>
+              ))}
+            </div>
+
+            {report.problems.map((p) => (
+              <p key={p} className="rounded-[10px] bg-[#FFF7DF] px-3.5 py-2.5 text-[12.5px] leading-relaxed text-[#8A6200]">
+                {p}
+              </p>
+            ))}
+
+            {report.outOfRange.length > 0 && (
+              <div className="rounded-[10px] bg-danger-tint px-3.5 py-2.5 text-[12.5px] leading-relaxed text-danger">
+                <p className="mb-1 font-bold">Fix these in the file first — nothing can be saved while they're there:</p>
+                <ul className="list-disc pl-4">
+                  {report.outOfRange.slice(0, 8).map((o, i) => (
+                    <li key={i}>
+                      {o.name} — {o.column}: {o.score} is above the maximum of {o.max}
+                    </li>
+                  ))}
+                </ul>
+                {report.outOfRange.length > 8 && <p className="mt-1">…and {report.outOfRange.length - 8} more.</p>}
+              </div>
+            )}
+
+            {report.unmatchedPupils.length > 0 && (
+              <p className="rounded-[10px] bg-[#FFF7DF] px-3.5 py-2.5 text-[12.5px] leading-relaxed text-[#8A6200]">
+                <strong>Skipped — no pupil by that name in {report.class.name}:</strong> {report.unmatchedPupils.slice(0, 10).join(", ")}
+                {report.unmatchedPupils.length > 10 && ` and ${report.unmatchedPupils.length - 10} more`}.
+              </p>
+            )}
+
+            {report.unmatchedColumns.length > 0 && (
+              <p className="rounded-[10px] bg-[#FFF7DF] px-3.5 py-2.5 text-[12.5px] leading-relaxed text-[#8A6200]">
+                <strong>Skipped — no matching assessment:</strong> {report.unmatchedColumns.slice(0, 10).join(", ")}. Add the
+                assessment in the portal first, or rename the column to match.
+              </p>
+            )}
+
+            {report.changes.length > 0 && (
+              <div className="max-h-52 overflow-y-auto rounded-[12px] border border-border">
+                <table className="w-full text-left text-[12.5px]">
+                  <thead className="sticky top-0 bg-bg">
+                    <tr>
+                      {["PUPIL", "ASSESSMENT", "FROM", "TO"].map((h) => (
+                        <th key={h} className="px-3 py-2 font-bold text-text-muted">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.changes.map((c, i) => (
+                      <tr key={i} className="border-t border-[#F0F0EE]">
+                        <td className="px-3 py-1.5 font-semibold">{c.name}</td>
+                        <td className="px-3 py-1.5 text-text-secondary">{c.column}</td>
+                        <td className="px-3 py-1.5 text-text-muted">{c.from ?? "—"}</td>
+                        <td className="px-3 py-1.5 font-bold">{c.to}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {report.changeCount > report.changes.length && (
+                  <p className="px-3 py-2 text-[12px] text-text-muted">
+                    …and {report.changeCount - report.changes.length} more, all included when you save.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {report.changeCount === 0 && !blocked && (
+              <p className="text-[13px] text-text-secondary">Nothing in that file differs from what's already recorded.</p>
+            )}
+
+            <Button variant="gold" className="!py-3" disabled={busy !== null || blocked || report.changeCount === 0} onClick={commit}>
+              {busy === "commit" ? "Saving…" : `Save ${report.changeCount} score${report.changeCount === 1 ? "" : "s"}`}
+            </Button>
+          </section>
+        )}
+      </div>
+    </Modal>
+  );
+}
+

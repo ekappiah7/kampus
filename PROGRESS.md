@@ -77,6 +77,50 @@ confirmation → attendance → weighted marks → homework approval gate → pi
 confirmed at the gate → report card published → website lead and Parent Voice
 landing in the admin inbox. All four packages typecheck; all three apps build.
 
+## Fees: dropping a charge
+
+A fee can be dropped three ways, and which one applies depends on how far it has
+gone:
+
+- **Never billed** — deleted outright.
+- **Billed to a class** — *withdrawn*. Every pupil's charge for the current term
+  is reversed and the item is archived. Earlier terms are left alone; those bills
+  are closed business.
+- **Billed to one pupil who shouldn't carry it** — *waived* for that pupil only.
+
+Reversal, not deletion, is the point. The original CHARGE row stays in the ledger
+and a REVERSAL is written beside it with the reason the admin typed, so "why is
+this balance what it is" still has an answer next year. A parent who had already
+paid ends up **in credit** rather than out of pocket, and both the portal and the
+parent app say so instead of showing a bland zero.
+
+A withdrawn item can be restored, or removed from the list for good — the latter
+detaches the ledger rows rather than deleting them, and each row's note already
+names the fee in words.
+
+## Marks: the Excel round trip
+
+Teachers here mark at home, often with no internet, and most are quicker in Excel
+than in any web grid. So the portal hands them the file they would have built
+themselves:
+
+- **Download** (Grades → Mark sheet) gives an .xlsx for that class and subject,
+  pupils and assessment columns already in it, each score cell validated against
+  its own maximum, identity columns locked.
+- **Upload** never writes on the first pass. It reports what *would* change —
+  every from→to, every unmatched pupil, every out-of-range score — and waits.
+  Out-of-range scores block the save entirely.
+- A hidden `_kampus` sheet records the school, class, subject, term and the pupil
+  id behind each row, so a file can't be applied to the wrong subject and a pupil
+  renamed in the meantime still lands on the right row.
+- Without that sheet — a rebuilt file, or a CSV out of Google Sheets — it falls
+  back to matching on names and **says so** in the preview.
+- **Class broadsheet** exports every subject against every pupil with averages
+  and positions. Export only; it isn't uploaded back.
+
+An assessment column can now be removed too, which the grid previously had no way
+to undo.
+
 ## Open — say these plainly to a client
 
 1. **Payments are simulated.** Mobile money and card record a payment; no money
@@ -86,22 +130,30 @@ landing in the admin inbox. All four packages typecheck; all three apps build.
 2. **No SMS.** A large share of parents at a Ghanaian basic school won't install
    an app. Fee reminders, absence alerts and pickup codes over SMS (Hubtel or
    Arkesel) is the highest-value next build and the objection you'll hear first.
-3. **No bulk import.** Every school has a pupil spreadsheet; typing 600 of them
-   in by hand is an adoption blocker. CSV import is phase 2.
+3. **Bulk import covers marks, not pupils.** Teachers can download an Excel mark
+   sheet, fill it offline and upload it back (see below). The pupil register
+   still has to be typed in; a school arriving with 600 names in a spreadsheet
+   is the next import to build, and it reuses the same download/preview/commit
+   shape.
 4. **No file uploads.** Crest, staff photos and gallery images take URLs, not
    uploads. Needs object storage (Firebase Storage fits, given the footprint).
 5. **No push notifications.** Notifications are created server-side and read in
    the app, but nothing is pushed to the device. FCM is the natural fit.
-6. **No tests.** Start with the fee ledger maths and the pickup-code confirm
-   flow — both are the kind of bug that's invisible in a demo and expensive in
-   production.
+6. **No test suite in the repo.** The fee-drop and mark-sheet paths were both
+   exercised end to end against the live API (20 and 20 assertions), but those
+   scripts were throwaway. The ledger maths and the pickup-code confirm flow are
+   where committed tests should start — both are the kind of bug that's invisible
+   in a demo and expensive in production.
 7. **Subdomain routing isn't wired.** The tenant resolves from a single school or
    an env var. Needed before onboarding school #2.
 8. **No academic-year rollover.** Bulk class promotion and carrying arrears
    forward are needed before a school reaches its second September.
 9. **No CI.** `cloudbuild/*.yaml` holds the build configs, but nothing runs them
    on merge.
-10. **`apps/mobile` is parked** — native Expo shell, excluded from the workspace.
+10. **A confirmed payment can't be reversed.** Cash confirmed in error has to be
+    corrected by hand. It is the same shape as a withdrawn fee — append a
+    reversing ledger row — and should be built next to it.
+11. **`apps/mobile` is parked** — native Expo shell, excluded from the workspace.
     See `apps/mobile/PARKED.md`.
 
 ## Build notes

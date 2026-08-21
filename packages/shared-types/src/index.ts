@@ -96,11 +96,13 @@ export interface FeeStatement {
   billed: number;
   paid: number;
   balance: number;
+  /** Paid beyond what is owed — usually a fee item withdrawn after it was paid. */
+  credit: number;
 }
 
 export interface LedgerEntryView {
   id: string;
-  type: "CHARGE" | "PAYMENT" | "SCHOLARSHIP" | "DISCOUNT";
+  type: "CHARGE" | "PAYMENT" | "SCHOLARSHIP" | "DISCOUNT" | "REVERSAL";
   amount: number;
   note: string | null;
   createdAt: string;

@@ -170,13 +170,62 @@ export interface StudentBalance {
   billed: number;
   paid: number;
   balance: number;
+  /** Paid beyond what is owed — usually because a billed item was later withdrawn. */
+  credit: number;
 }
 
 export async function studentBalance(studentId: string, termId: string): Promise<StudentBalance> {
   const breakdown = await computeBreakdown(studentId, termId);
   const billed = money(breakdown.reduce((sum, l) => sum + l.netAmount, 0));
   const paid = await totalPaid(studentId, termId);
-  return { billed, paid, balance: money(Math.max(billed - paid, 0)) };
+  return {
+    billed,
+    paid,
+    balance: money(Math.max(billed - paid, 0)),
+    credit: money(Math.max(paid - billed, 0)),
+  };
+}
+
+/**
+ * Cancels a pupil's charge for one fee item.
+ *
+ * The ledger is append-only, so the CHARGE row stays and a matching REVERSAL is
+ * written beside it — "this was billed, then withdrawn on this date, for this
+ * reason" reads correctly a year later, which a delete would destroy. The charge
+ * row itself goes, because balances are computed from charges and a withdrawn fee
+ * should stop being owed.
+ *
+ * Returns the amount reversed, or null if the pupil was never charged for it.
+ */
+export async function reverseCharge(
+  studentId: string,
+  feeLineItemId: string,
+  termId: string,
+  reason: string,
+  staffId?: string,
+): Promise<number | null> {
+  const charge = await prisma.studentFeeCharge.findUnique({
+    where: { studentId_feeLineItemId_termId: { studentId, feeLineItemId, termId } },
+  });
+  if (!charge) return null;
+
+  await prisma.$transaction([
+    prisma.feeLedgerEntry.create({
+      data: {
+        studentId,
+        termId,
+        type: "REVERSAL",
+        amount: -charge.originalAmount,
+        feeLineItemId,
+        note: reason,
+        createdByStaffId: staffId ?? null,
+      },
+    }),
+    prisma.studentFeeCharge.delete({ where: { id: charge.id } }),
+  ]);
+
+  await recomputeCharges(studentId, termId);
+  return money(charge.originalAmount);
 }
 
 /**
@@ -186,6 +235,7 @@ export async function studentBalance(studentId: string, termId: string): Promise
 export async function billClass(feeLineItemId: string, termId: string): Promise<number> {
   const item = await prisma.feeLineItem.findUnique({ where: { id: feeLineItemId } });
   if (!item) throw new Error("Fee line item not found");
+  if (item.archived) throw new Error("This fee item has been withdrawn. Restore it before billing.");
 
   const students = await prisma.student.findMany({
     where: { schoolId: item.schoolId, active: true, ...(item.classId ? { classId: item.classId } : {}) },

@@ -545,6 +545,12 @@ model FeeLineItem {
   label    String // "Tuition", "Feeding fee", "PTA dues", "Sports & excursion"
   amount   Float
 
+  /// Withdrawn items keep their history — charges are reversed, not deleted — but
+  /// are no longer billable and drop out of the active list.
+  archived       Boolean   @default(false)
+  archivedAt     DateTime?
+  archivedReason String?
+
   charges             StudentFeeCharge[]
   scholarshipCoverage ScholarshipCoverage[]
   discounts           Discount[]
@@ -676,6 +682,8 @@ enum LedgerEntryType {
   PAYMENT
   SCHOLARSHIP
   DISCOUNT
+  /// Cancels an earlier CHARGE — a fee item withdrawn or waived after billing.
+  REVERSAL
 }
 
 /// Append-only audit trail: every charge, payment, scholarship subsidy, and discount touching a balance.

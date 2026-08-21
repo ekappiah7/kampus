@@ -5,6 +5,16 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { initialsOf, avatarTint } from "../lib/codes";
 import { audit } from "../lib/audit";
 import { rollUpGrade } from "../lib/grading";
+import multer from "multer";
+import {
+  buildMarkSheet,
+  markSheetFilename,
+  nameKey,
+  parseMarkSheet,
+  type SheetComponent,
+  type SheetContext,
+  type SheetPupil,
+} from "../lib/markSheet";
 
 export const staffRouter = Router();
 staffRouter.use(requireAuth, requireRole("teacher", "admin", "gate-staff"));
@@ -137,6 +147,36 @@ staffRouter.post("/roster/attendance", requireRole("teacher", "admin"), async (r
  * chosen subject. Returns the full grid in one call so the teacher can fill it in
  * like a mark book rather than opening each pupil in turn.
  */
+/**
+ * Everything the grade grid needs: the pupils, the assessment columns, and the marks
+ * already recorded. The on-screen grid, the Excel template and the importer all read
+ * from here, so a column can never mean one thing in the browser and another in the
+ * spreadsheet.
+ */
+async function loadGradeSheet(schoolId: string, classId: string, subjectId?: string) {
+  const subjects = await prisma.subject.findMany({ where: { classId }, orderBy: { name: "asc" } });
+  if (!subjects.length) return { subjects: [], subject: null, components: [], students: [], entries: [] };
+
+  const subject = subjectId ? subjects.find((s) => s.id === subjectId) : subjects[0];
+  if (!subject) return { subjects, subject: null, components: [], students: [], entries: [] };
+
+  const term = await currentTerm(schoolId);
+  if (!term) return { subjects, subject, components: [], students: [], entries: [] };
+
+  const students = await prisma.student.findMany({ where: { classId, active: true }, orderBy: { name: "asc" } });
+  const entries = await prisma.assessmentEntry.findMany({
+    where: { subjectId: subject.id, termId: term.id, studentId: { in: students.map((s) => s.id) } },
+  });
+
+  const componentMap = new Map<string, SheetComponent>();
+  for (const e of entries) {
+    const key = `${e.type}::${e.label}`;
+    if (!componentMap.has(key)) componentMap.set(key, { key, label: e.label, type: e.type, weightPct: e.weightPct, maxScore: e.maxScore });
+  }
+
+  return { subjects, subject, components: Array.from(componentMap.values()), students, entries };
+}
+
 staffRouter.get("/grade-sheet", requireRole("teacher", "admin"), async (req, res) => {
   const auth = req.auth!;
   const cls = await resolveClass(req as never);
@@ -146,38 +186,20 @@ staffRouter.get("/grade-sheet", requireRole("teacher", "admin"), async (req, res
   if (!term) return res.status(400).json({ error: "No current term. Ask your administrator to open one." });
 
   const subjectId = typeof req.query.subjectId === "string" ? req.query.subjectId : undefined;
-  const subjects = await prisma.subject.findMany({ where: { classId: cls.id }, orderBy: { name: "asc" } });
-  if (!subjects.length) return res.json({ class: cls, term, subjects: [], subject: null, components: [], rows: [] });
+  const sheet = await loadGradeSheet(auth.schoolId, cls.id, subjectId);
+  if (!sheet.subjects.length) return res.json({ class: cls, term, subjects: [], subject: null, components: [], rows: [] });
+  if (!sheet.subject) return res.status(404).json({ error: "Subject not found" });
 
-  const subject = subjectId ? subjects.find((s) => s.id === subjectId) : subjects[0];
-  if (!subject) return res.status(404).json({ error: "Subject not found" });
-
-  const students = await prisma.student.findMany({ where: { classId: cls.id, active: true }, orderBy: { name: "asc" } });
-  const entries = await prisma.assessmentEntry.findMany({
-    where: { subjectId: subject.id, termId: term.id, studentId: { in: students.map((s) => s.id) } },
-  });
-
-  // Components are defined by whatever the teacher has already created for this
-  // subject; the label+type+weight triple identifies a column.
-  const componentMap = new Map<string, { key: string; label: string; type: string; weightPct: number; maxScore: number }>();
-  for (const e of entries) {
-    const key = `${e.type}::${e.label}`;
-    if (!componentMap.has(key)) {
-      componentMap.set(key, { key, label: e.label, type: e.type, weightPct: e.weightPct, maxScore: e.maxScore });
-    }
-  }
-  const components = Array.from(componentMap.values());
-
-  const rows = students.map((s) => {
+  const rows = sheet.students.map((s) => {
     const scores: Record<string, number | null> = {};
-    for (const c of components) {
-      const entry = entries.find((e) => e.studentId === s.id && `${e.type}::${e.label}` === c.key);
+    for (const c of sheet.components) {
+      const entry = sheet.entries.find((e) => e.studentId === s.id && `${e.type}::${e.label}` === c.key);
       scores[c.key] = entry ? entry.score : null;
     }
-    const own = entries.filter((e) => e.studentId === s.id);
+    const own = sheet.entries.filter((e) => e.studentId === s.id);
     const rolled = own.length
       ? rollUpGrade(
-          subject.name,
+          sheet.subject!.name,
           own.map((e) => ({ label: e.label, type: e.type, score: e.score, maxScore: e.maxScore, weightPct: e.weightPct })),
         )
       : null;
@@ -196,9 +218,9 @@ staffRouter.get("/grade-sheet", requireRole("teacher", "admin"), async (req, res
   res.json({
     class: { id: cls.id, name: cls.name },
     term: { id: term.id, name: term.name, academicYear: term.academicYear },
-    subjects: subjects.map((s) => ({ id: s.id, name: s.name })),
-    subject: { id: subject.id, name: subject.name },
-    components,
+    subjects: sheet.subjects.map((s) => ({ id: s.id, name: s.name })),
+    subject: { id: sheet.subject.id, name: sheet.subject.name },
+    components: sheet.components,
     rows,
   });
 });
@@ -260,6 +282,35 @@ staffRouter.post("/grade-sheet/components", requireRole("teacher", "admin"), asy
   res.status(201).json({ ok: true, students: students.length });
 });
 
+/**
+ * Removes an assessment column and every score under it.
+ *
+ * The counterpart to adding one. A teacher who creates "Quiz 2" at the wrong weight,
+ * or twice, otherwise has a column they can never get rid of and a weight total that
+ * will not reach 100.
+ */
+staffRouter.delete("/grade-sheet/components", requireRole("teacher", "admin"), async (req, res) => {
+  const auth = req.auth!;
+  const subjectId = typeof req.query.subjectId === "string" ? req.query.subjectId : undefined;
+  const componentKey = typeof req.query.componentKey === "string" ? req.query.componentKey : undefined;
+  if (!subjectId || !componentKey) return res.status(400).json({ error: "Pick the assessment to remove." });
+
+  const subject = await prisma.subject.findFirst({ where: { id: subjectId, schoolId: auth.schoolId } });
+  if (!subject) return res.status(404).json({ error: "Subject not found" });
+  const term = await currentTerm(auth.schoolId);
+  if (!term) return res.status(400).json({ error: "No current term" });
+
+  const [type, ...labelParts] = componentKey.split("::");
+  const label = labelParts.join("::");
+  const { count } = await prisma.assessmentEntry.deleteMany({
+    where: { subjectId: subject.id, termId: term.id, type: type as never, label },
+  });
+  if (!count) return res.status(404).json({ error: "That assessment is not on this subject." });
+
+  audit(auth, "grade.component.delete", { schoolId: auth.schoolId, entity: `subject:${subject.id}`, detail: `${label} (${count} score rows)` });
+  res.json({ ok: true, removed: count });
+});
+
 const saveSheetSchema = z.object({
   subjectId: z.string(),
   scores: z.array(z.object({ studentId: z.string(), componentKey: z.string(), score: z.number().min(0) })),
@@ -294,6 +345,306 @@ staffRouter.post("/grade-sheet", requireRole("teacher", "admin"), async (req, re
 
   audit(auth, "grade.save", { schoolId: auth.schoolId, entity: `subject:${subject.id}`, detail: `${updated} score(s)` });
   res.json({ ok: true, updated });
+});
+
+
+// ---------------------------------------------------------------------------
+// Excel mark sheet: download the grid, fill it in offline, upload it back
+// ---------------------------------------------------------------------------
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
+
+async function sheetContext(schoolId: string, staffId: string, cls: { id: string; name: string }, subject: { id: string; name: string }) {
+  const [school, term, staff] = await Promise.all([
+    prisma.school.findUnique({ where: { id: schoolId } }),
+    currentTerm(schoolId),
+    prisma.staff.findUnique({ where: { id: staffId } }),
+  ]);
+  if (!school || !term) return null;
+  const ctx: SheetContext = {
+    schoolName: school.name,
+    schoolId: school.id,
+    className: cls.name,
+    classId: cls.id,
+    subjectName: subject.name,
+    subjectId: subject.id,
+    termName: term.name,
+    academicYear: term.academicYear,
+    termId: term.id,
+    teacherName: staff?.name ?? "—",
+  };
+  return ctx;
+}
+
+staffRouter.get("/grade-sheet/template", requireRole("teacher", "admin"), async (req, res) => {
+  const auth = req.auth!;
+  const cls = await resolveClass(req as never);
+  if (!cls) return res.status(400).json({ error: "No class selected" });
+
+  const subjectId = typeof req.query.subjectId === "string" ? req.query.subjectId : undefined;
+  const sheet = await loadGradeSheet(auth.schoolId, cls.id, subjectId);
+  if (!sheet.subject) return res.status(400).json({ error: "This class has no subjects yet." });
+
+  const ctx = await sheetContext(auth.schoolId, auth.id, cls, sheet.subject);
+  if (!ctx) return res.status(400).json({ error: "No current term. Ask your administrator to open one." });
+
+  const pupils: SheetPupil[] = sheet.students.map((s) => {
+    const scores: Record<string, number | null> = {};
+    for (const c of sheet.components) {
+      const entry = sheet.entries.find((e) => e.studentId === s.id && `${e.type}::${e.label}` === c.key);
+      scores[c.key] = entry ? entry.score : null;
+    }
+    return { studentId: s.id, name: s.name, scores };
+  });
+
+  const buffer = await buildMarkSheet(ctx, sheet.components, pupils);
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="${markSheetFilename(ctx)}"`);
+  res.send(buffer);
+});
+
+interface ImportChange {
+  name: string;
+  column: string;
+  from: number | null;
+  to: number;
+}
+
+/**
+ * Reads an uploaded mark sheet and reports exactly what it would change.
+ *
+ * Nothing is written unless `commit=1`. A teacher who grabs last term's file, or the
+ * wrong subject's file, should find that out from a summary — not from discovering a
+ * term of marks overwritten. The dry run and the commit share this one code path so
+ * the preview can't drift from what actually happens.
+ */
+staffRouter.post("/grade-sheet/import", requireRole("teacher", "admin"), upload.single("file"), async (req, res) => {
+  const auth = req.auth!;
+  if (!req.file) return res.status(400).json({ error: "Attach the filled-in mark sheet." });
+
+  const cls = await resolveClass(req as never);
+  if (!cls) return res.status(400).json({ error: "No class selected" });
+
+  const term = await currentTerm(auth.schoolId);
+  if (!term) return res.status(400).json({ error: "No current term. Ask your administrator to open one." });
+
+  let parsed;
+  try {
+    parsed = await parseMarkSheet(req.file.buffer, req.file.originalname ?? "upload.xlsx");
+  } catch {
+    return res.status(400).json({ error: "That file could not be read as a spreadsheet. Save it as .xlsx or .csv and try again." });
+  }
+
+  // The file's own metadata picks the subject when it has any — that is the whole
+  // point of it — and it is checked against this school so one school's sheet can
+  // never be applied to another's marks.
+  const problems = [...parsed.problems];
+  if (parsed.meta && parsed.meta.schoolId && parsed.meta.schoolId !== auth.schoolId) {
+    return res.status(400).json({ error: "That mark sheet belongs to a different school." });
+  }
+  if (parsed.meta && parsed.meta.termId && parsed.meta.termId !== term.id) {
+    return res.status(400).json({
+      error: "That mark sheet was downloaded for a different term. Download a fresh one for the current term.",
+    });
+  }
+
+  const subjectId =
+    parsed.meta?.subjectId ?? (typeof req.query.subjectId === "string" ? req.query.subjectId : undefined);
+  const sheet = await loadGradeSheet(auth.schoolId, cls.id, subjectId);
+  if (!sheet.subject) return res.status(400).json({ error: "Could not tell which subject this sheet is for. Pick one and try again." });
+  if (parsed.meta?.classId && parsed.meta.classId !== cls.id) {
+    return res.status(400).json({ error: `That mark sheet is for a different class, not ${cls.name}.` });
+  }
+  if (!sheet.components.length) {
+    return res.status(400).json({ error: `${sheet.subject.name} has no assessments yet. Add them first, then download a template.` });
+  }
+
+  // --- resolve every parsed cell against real pupils and real columns -------
+  const byId = new Map(sheet.students.map((s) => [s.id, s]));
+  const byName = new Map(sheet.students.map((s) => [nameKey(s.name), s]));
+  const componentByKey = new Map(sheet.components.map((c) => [c.key, c]));
+  const componentByLabel = new Map(sheet.components.map((c) => [nameKey(c.label), c]));
+
+  const changes: ImportChange[] = [];
+  const outOfRange: { name: string; column: string; score: number; max: number }[] = [];
+  const unmatchedPupils = new Set<string>();
+  const unmatchedColumns = new Set<string>();
+  let unchanged = 0;
+
+  const writes: { entryId: string; score: number }[] = [];
+
+  for (const cell of parsed.scores) {
+    const student = cell.studentId ? byId.get(cell.studentId) : byName.get(nameKey(cell.rowLabel));
+    if (!student) {
+      unmatchedPupils.add(cell.rowLabel);
+      continue;
+    }
+    const component = cell.componentKey ? componentByKey.get(cell.componentKey) : componentByLabel.get(nameKey(cell.columnLabel));
+    if (!component) {
+      unmatchedColumns.add(cell.columnLabel);
+      continue;
+    }
+    if (cell.score < 0 || cell.score > component.maxScore) {
+      outOfRange.push({ name: student.name, column: component.label, score: cell.score, max: component.maxScore });
+      continue;
+    }
+
+    const entry = sheet.entries.find((e) => e.studentId === student.id && `${e.type}::${e.label}` === component.key);
+    if (!entry) {
+      unmatchedColumns.add(component.label);
+      continue;
+    }
+    if (entry.score === cell.score) {
+      unchanged++;
+      continue;
+    }
+    changes.push({ name: student.name, column: component.label, from: entry.score > 0 ? entry.score : null, to: cell.score });
+    writes.push({ entryId: entry.id, score: cell.score });
+  }
+
+  const commit = req.query.commit === "1" && outOfRange.length === 0;
+
+  if (commit && writes.length) {
+    await prisma.$transaction(
+      writes.map((w) => prisma.assessmentEntry.update({ where: { id: w.entryId }, data: { score: w.score, enteredByStaffId: auth.id } })),
+    );
+    audit(auth, "grade.import", {
+      schoolId: auth.schoolId,
+      entity: `subject:${sheet.subject.id}`,
+      detail: `${writes.length} score(s) from ${req.file.originalname ?? "a spreadsheet"}`,
+    });
+  }
+
+  res.json({
+    committed: commit,
+    subject: { id: sheet.subject.id, name: sheet.subject.name },
+    class: { id: cls.id, name: cls.name },
+    term: { id: term.id, name: term.name },
+    updated: commit ? writes.length : 0,
+    pending: writes.length,
+    unchanged,
+    // The full list would be unreadable for a class of forty; the count carries the
+    // rest so the teacher still knows the scale of what they are about to apply.
+    changes: changes.slice(0, 60),
+    changeCount: changes.length,
+    outOfRange,
+    unmatchedPupils: Array.from(unmatchedPupils),
+    unmatchedColumns: Array.from(unmatchedColumns),
+    problems,
+  });
+});
+
+/**
+ * The class broadsheet — every pupil against every subject, with the term average and
+ * position. Schools here assemble this by hand at the end of term to rank the class
+ * and fill report cards from; it is the one sheet the head actually asks for.
+ */
+staffRouter.get("/broadsheet", requireRole("teacher", "admin"), async (req, res) => {
+  const auth = req.auth!;
+  const cls = await resolveClass(req as never);
+  if (!cls) return res.status(400).json({ error: "No class selected" });
+
+  const [school, term] = await Promise.all([
+    prisma.school.findUnique({ where: { id: auth.schoolId } }),
+    currentTerm(auth.schoolId),
+  ]);
+  if (!school || !term) return res.status(400).json({ error: "No current term. Ask your administrator to open one." });
+
+  const [subjects, students] = await Promise.all([
+    prisma.subject.findMany({ where: { classId: cls.id }, orderBy: { name: "asc" } }),
+    prisma.student.findMany({ where: { classId: cls.id, active: true }, orderBy: { name: "asc" } }),
+  ]);
+  if (!subjects.length) return res.status(400).json({ error: "This class has no subjects yet." });
+
+  const entries = await prisma.assessmentEntry.findMany({
+    where: { termId: term.id, subjectId: { in: subjects.map((s) => s.id) }, studentId: { in: students.map((s) => s.id) } },
+  });
+
+  const rows = students.map((s) => {
+    const perSubject = subjects.map((subj) => {
+      const own = entries.filter((e) => e.studentId === s.id && e.subjectId === subj.id);
+      if (!own.length) return null;
+      return rollUpGrade(subj.name, own.map((e) => ({ label: e.label, type: e.type, score: e.score, maxScore: e.maxScore, weightPct: e.weightPct })))
+        .finalScore;
+    });
+    const marked = perSubject.filter((v): v is number => v !== null);
+    const average = marked.length ? Math.round(marked.reduce((a, b) => a + b, 0) / marked.length) : null;
+    return { name: s.name, perSubject, average };
+  });
+
+  // Equal averages share a position, and the next position skips accordingly —
+  // two pupils on 2nd means the next is 4th, which is how schools rank here.
+  const ordered = [...rows].filter((r) => r.average !== null).sort((a, b) => (b.average ?? 0) - (a.average ?? 0));
+  const position = new Map<string, number>();
+  ordered.forEach((r, i) => {
+    const prev = ordered[i - 1];
+    position.set(r.name, prev && prev.average === r.average ? position.get(prev.name)! : i + 1);
+  });
+
+  const ExcelJS = (await import("exceljs")).default;
+  const wb = new ExcelJS.Workbook();
+  wb.creator = school.name;
+  const ws = wb.addWorksheet("Broadsheet", { views: [{ state: "frozen", xSplit: 2, ySplit: 5 }] });
+
+  const lastCol = 3 + subjects.length + 1;
+  ws.mergeCells(1, 1, 1, lastCol);
+  ws.getCell(1, 1).value = school.name;
+  ws.getCell(1, 1).font = { size: 16, bold: true };
+  ws.getCell(1, 1).alignment = { horizontal: "center" };
+  ws.mergeCells(2, 1, 2, lastCol);
+  ws.getCell(2, 1).value = `${cls.name} — Broadsheet — ${term.name} ${term.academicYear}`;
+  ws.getCell(2, 1).font = { size: 12, bold: true };
+  ws.getCell(2, 1).alignment = { horizontal: "center" };
+
+  const header = ws.getRow(5);
+  header.getCell(1).value = "#";
+  header.getCell(2).value = "Pupil name";
+  subjects.forEach((s, i) => (header.getCell(3 + i).value = s.name));
+  header.getCell(3 + subjects.length).value = "Average";
+  header.getCell(4 + subjects.length).value = "Position";
+  header.height = 34;
+  header.eachCell((c) => {
+    c.font = { bold: true, size: 10 };
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFC629" } };
+    c.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    c.border = { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } };
+  });
+
+  ws.getColumn(1).width = 5;
+  ws.getColumn(2).width = 30;
+  subjects.forEach((_, i) => (ws.getColumn(3 + i).width = 13));
+  ws.getColumn(3 + subjects.length).width = 11;
+  ws.getColumn(4 + subjects.length).width = 10;
+
+  rows.forEach((r, i) => {
+    const row = ws.getRow(6 + i);
+    row.getCell(1).value = i + 1;
+    row.getCell(2).value = r.name;
+    row.getCell(2).font = { bold: true };
+    r.perSubject.forEach((v, j) => {
+      const cell = row.getCell(3 + j);
+      cell.value = v;
+      cell.alignment = { horizontal: "center" };
+      if (v !== null && v < 50) cell.font = { color: { argb: "FFC74747" } };
+    });
+    row.getCell(3 + subjects.length).value = r.average;
+    row.getCell(3 + subjects.length).font = { bold: true };
+    row.getCell(3 + subjects.length).alignment = { horizontal: "center" };
+    row.getCell(4 + subjects.length).value = position.get(r.name) ?? null;
+    row.getCell(4 + subjects.length).alignment = { horizontal: "center" };
+  });
+
+  ws.getRow(7 + rows.length).getCell(2).value = "Blank cells mean no marks have been recorded for that subject yet.";
+  ws.getRow(7 + rows.length).getCell(2).font = { italic: true, size: 9, color: { argb: "FF6B6F76" } };
+
+  const safe = (v: string) => v.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const buffer = Buffer.from(await wb.xlsx.writeBuffer());
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="${safe(cls.name)}-${safe(term.name)}-broadsheet.xlsx"`);
+  res.send(buffer);
 });
 
 // ---------------------------------------------------------------------------

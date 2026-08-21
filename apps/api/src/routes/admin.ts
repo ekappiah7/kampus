@@ -4,7 +4,7 @@ import { prisma } from "@kampus/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { accessCode, avatarTint, initialsOf } from "../lib/codes";
 import { audit } from "../lib/audit";
-import { billClass, recomputeCharges, studentBalance } from "../lib/fees";
+import { billClass, recomputeCharges, reverseCharge, studentBalance } from "../lib/fees";
 import { normalisePhone } from "./auth";
 
 export const adminRouter = Router();
@@ -556,12 +556,25 @@ adminRouter.post("/parents/:id/reset-access", async (req, res) => {
 // ---------------------------------------------------------------------------
 
 adminRouter.get("/fee-items", async (req, res) => {
+  const schoolId = req.auth!.schoolId;
   const items = await prisma.feeLineItem.findMany({
-    where: { schoolId: req.auth!.schoolId },
-    include: { class: true },
-    orderBy: [{ class: { order: "asc" } }, { label: "asc" }],
+    where: { schoolId, ...(req.query.includeArchived === "1" ? {} : { archived: false }) },
+    include: { class: true, _count: { select: { charges: true } } },
+    orderBy: [{ archived: "asc" }, { class: { order: "asc" } }, { label: "asc" }],
   });
-  res.json(items.map((i) => ({ id: i.id, label: i.label, amount: i.amount, classId: i.classId, className: i.class?.name ?? "All levels" })));
+  res.json(
+    items.map((i) => ({
+      id: i.id,
+      label: i.label,
+      amount: i.amount,
+      classId: i.classId,
+      className: i.class?.name ?? "All levels",
+      archived: i.archived,
+      archivedReason: i.archivedReason,
+      // Drives the UI's choice between a plain delete and a withdrawal.
+      billedCount: i._count.charges,
+    })),
+  );
 });
 
 const feeItemSchema = z.object({ label: z.string().min(1), amount: z.number().nonnegative(), classId: z.string().optional().nullable() });
@@ -577,13 +590,141 @@ adminRouter.post("/fee-items", async (req, res) => {
   res.status(201).json(created);
 });
 
+/**
+ * Removes a fee item that was never billed. Once pupils have been charged, the item
+ * has to be withdrawn instead (below) so the ledger keeps its history.
+ */
 adminRouter.delete("/fee-items/:id", async (req, res) => {
   const item = await prisma.feeLineItem.findFirst({ where: { id: req.params.id, schoolId: req.auth!.schoolId } });
   if (!item) return res.status(404).json({ error: "Fee item not found" });
   const charged = await prisma.studentFeeCharge.count({ where: { feeLineItemId: item.id } });
-  if (charged > 0) return res.status(409).json({ error: `This item is already billed to ${charged} pupil(s) and cannot be deleted.` });
-  await prisma.feeLineItem.delete({ where: { id: item.id } });
+  if (charged > 0) {
+    return res.status(409).json({
+      error: `This item is billed to ${charged} pupil(s). Withdraw it instead — that reverses the charges and keeps the record.`,
+      billedCount: charged,
+    });
+  }
+
+  // A withdrawn item still has ledger rows pointing at it — the CHARGE and its
+  // REVERSAL. Those rows stay: the money history is not ours to erase. Only the link
+  // is dropped, and each row's note already names the fee in words, so the ledger
+  // still reads correctly once the item itself is gone.
+  await prisma.$transaction([
+    prisma.feeLedgerEntry.updateMany({ where: { feeLineItemId: item.id }, data: { feeLineItemId: null } }),
+    prisma.scholarshipCoverage.deleteMany({ where: { feeLineItemId: item.id } }),
+    prisma.discount.deleteMany({ where: { feeLineItemId: item.id } }),
+    prisma.feeLineItem.delete({ where: { id: item.id } }),
+  ]);
+  audit(req.auth!, "fee_item.delete", { schoolId: item.schoolId, entity: `fee_item:${item.id}`, detail: item.label });
   res.json({ ok: true });
+});
+
+const withdrawSchema = z.object({ reason: z.string().min(1).max(200) });
+
+/**
+ * Drops a fee item that has already been billed — an excursion called off, a levy
+ * the PTA reversed, a charge raised in error.
+ *
+ * Every pupil's charge for the current term is reversed, so balances fall by the
+ * amount and anyone who already paid is left holding a credit rather than losing
+ * the money. Earlier terms are left alone: those bills are closed business.
+ */
+adminRouter.post("/fee-items/:id/withdraw", async (req, res) => {
+  const parsed = withdrawSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Say briefly why this fee is being withdrawn." });
+
+  const schoolId = req.auth!.schoolId;
+  const item = await prisma.feeLineItem.findFirst({ where: { id: req.params.id, schoolId } });
+  if (!item) return res.status(404).json({ error: "Fee item not found" });
+
+  const term = await prisma.term.findFirst({ where: { schoolId, isCurrent: true } });
+  if (!term) return res.status(400).json({ error: "Set a current term first" });
+
+  const charges = await prisma.studentFeeCharge.findMany({
+    where: { feeLineItemId: item.id, termId: term.id },
+    select: { studentId: true },
+  });
+
+  let reversed = 0;
+  let amount = 0;
+  for (const c of charges) {
+    const value = await reverseCharge(c.studentId, item.id, term.id, `${item.label} withdrawn — ${parsed.data.reason}`, req.auth!.id);
+    if (value !== null) {
+      reversed++;
+      amount += value;
+    }
+  }
+
+  await prisma.feeLineItem.update({
+    where: { id: item.id },
+    data: { archived: true, archivedAt: new Date(), archivedReason: parsed.data.reason },
+  });
+
+  audit(req.auth!, "fee_item.withdraw", {
+    schoolId,
+    entity: `fee_item:${item.id}`,
+    detail: `${item.label} — ${reversed} pupil(s), GH₵${Math.round(amount * 100) / 100} reversed — ${parsed.data.reason}`,
+  });
+  res.json({ reversed, amount: Math.round(amount * 100) / 100 });
+});
+
+/** Puts a withdrawn item back in the active list. It is not re-billed automatically. */
+adminRouter.post("/fee-items/:id/restore", async (req, res) => {
+  const item = await prisma.feeLineItem.findFirst({ where: { id: req.params.id, schoolId: req.auth!.schoolId } });
+  if (!item) return res.status(404).json({ error: "Fee item not found" });
+  await prisma.feeLineItem.update({
+    where: { id: item.id },
+    data: { archived: false, archivedAt: null, archivedReason: null },
+  });
+  audit(req.auth!, "fee_item.restore", { schoolId: item.schoolId, entity: `fee_item:${item.id}`, detail: item.label });
+  res.json({ ok: true });
+});
+
+const waiveSchema = z.object({ studentId: z.string(), feeLineItemId: z.string(), reason: z.string().min(1).max(200) });
+
+/**
+ * Drops one fee from one pupil — the commoner case by far. A child who does not take
+ * the bus, or who left mid-term, should not carry a charge the rest of the class does.
+ */
+adminRouter.post("/fee-items/waive", async (req, res) => {
+  const parsed = waiveSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Pick a pupil and a fee item, and say why." });
+
+  const schoolId = req.auth!.schoolId;
+  const [student, item, term] = await Promise.all([
+    prisma.student.findFirst({ where: { id: parsed.data.studentId, schoolId } }),
+    prisma.feeLineItem.findFirst({ where: { id: parsed.data.feeLineItemId, schoolId } }),
+    prisma.term.findFirst({ where: { schoolId, isCurrent: true } }),
+  ]);
+  if (!student) return res.status(404).json({ error: "Pupil not found" });
+  if (!item) return res.status(404).json({ error: "Fee item not found" });
+  if (!term) return res.status(400).json({ error: "Set a current term first" });
+
+  const amount = await reverseCharge(student.id, item.id, term.id, `${item.label} waived — ${parsed.data.reason}`, req.auth!.id);
+  if (amount === null) return res.status(409).json({ error: `${student.name} was not billed for ${item.label} this term.` });
+
+  audit(req.auth!, "fee_item.waive", {
+    schoolId,
+    entity: `student:${student.id}`,
+    detail: `${item.label} GH₵${amount} waived for ${student.name} — ${parsed.data.reason}`,
+  });
+  res.json({ amount });
+});
+
+/** The fee items a pupil is actually carrying this term, for the waive picker. */
+adminRouter.get("/students/:id/charges", async (req, res) => {
+  const schoolId = req.auth!.schoolId;
+  const student = await prisma.student.findFirst({ where: { id: req.params.id, schoolId } });
+  if (!student) return res.status(404).json({ error: "Pupil not found" });
+  const term = await prisma.term.findFirst({ where: { schoolId, isCurrent: true } });
+  if (!term) return res.json([]);
+
+  const charges = await prisma.studentFeeCharge.findMany({
+    where: { studentId: student.id, termId: term.id },
+    include: { feeLineItem: true },
+    orderBy: { feeLineItem: { label: "asc" } },
+  });
+  res.json(charges.map((c) => ({ feeLineItemId: c.feeLineItemId, label: c.feeLineItem.label, amount: c.originalAmount, netAmount: c.netAmount })));
 });
 
 /** Bills a fee item to every active pupil it applies to, for the current term. */
@@ -591,6 +732,9 @@ adminRouter.post("/fee-items/:id/bill", async (req, res) => {
   const schoolId = req.auth!.schoolId;
   const item = await prisma.feeLineItem.findFirst({ where: { id: req.params.id, schoolId } });
   if (!item) return res.status(404).json({ error: "Fee item not found" });
+  if (item.archived) {
+    return res.status(400).json({ error: `${item.label} has been withdrawn. Restore it first if you want to bill it again.` });
+  }
   const term = await prisma.term.findFirst({ where: { schoolId, isCurrent: true } });
   if (!term) return res.status(400).json({ error: "Set a current term first" });
 
@@ -614,7 +758,7 @@ adminRouter.get("/fee-overview", async (req, res) => {
   let expected = 0;
   let collected = 0;
   for (const s of students) {
-    const { billed, paid, balance } = await studentBalance(s.id, term.id);
+    const { billed, paid, balance, credit } = await studentBalance(s.id, term.id);
     expected += billed;
     collected += paid;
     rows.push({
@@ -624,7 +768,8 @@ adminRouter.get("/fee-overview", async (req, res) => {
       billed,
       paid,
       balance,
-      status: balance === 0 ? (billed > 0 ? "Paid" : "Not billed") : paid > 0 ? "Part-paid" : "Outstanding",
+      credit,
+      status: credit > 0 ? "In credit" : balance === 0 ? (billed > 0 ? "Paid" : "Not billed") : paid > 0 ? "Part-paid" : "Outstanding",
     });
   }
 

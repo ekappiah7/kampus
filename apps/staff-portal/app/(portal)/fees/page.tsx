@@ -3,23 +3,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Badge, Button, Card, EmptyState, ErrorState, Field, Modal, PageHeader, Skeleton, inputClass, money, useToast } from "@/components/ui";
+import type { FeeItemView, FeeOverviewRow } from "@kampus/api-client";
 
-interface FeeItem {
-  id: string;
-  label: string;
-  amount: number;
-  classId: string | null;
-  className: string;
-}
-interface OverviewRow {
-  studentId: string;
-  name: string;
-  className: string;
-  billed: number;
-  paid: number;
-  balance: number;
-  status: string;
-}
+type FeeItem = FeeItemView;
+type OverviewRow = FeeOverviewRow;
 interface PendingCash {
   id: string;
   reference: string | null;
@@ -35,14 +22,16 @@ export default function FeesPage() {
   const [cash, setCash] = useState<PendingCash[]>([]);
   const [classes, setClasses] = useState<{ id: string; name: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [modal, setModal] = useState<null | "item" | "adjust" | "payment">(null);
+  const [modal, setModal] = useState<null | "item" | "adjust" | "payment" | "drop" | "waive">(null);
   const [target, setTarget] = useState<OverviewRow | null>(null);
+  const [dropTarget, setDropTarget] = useState<FeeItem | null>(null);
   const [filter, setFilter] = useState<"all" | "owing">("all");
+  const [showWithdrawn, setShowWithdrawn] = useState(false);
   const { toast, toastNode } = useToast();
 
   const load = useCallback(() => {
     setError(null);
-    api.admin.feeItems().then((i) => setItems(i as FeeItem[])).catch(() => setItems([]));
+    api.admin.feeItems(true).then(setItems).catch(() => setItems([]));
     api.admin
       .feeOverview()
       .then((o) => setOverview(o as typeof overview))
@@ -74,6 +63,30 @@ export default function FeesPage() {
   }
 
   const rows = overview?.rows.filter((r) => (filter === "owing" ? r.balance > 0 : true)) ?? [];
+  const active = items?.filter((i) => !i.archived) ?? [];
+  const withdrawn = items?.filter((i) => i.archived) ?? [];
+
+  /** Clears a withdrawn item off the list for good. The ledger rows survive it. */
+  async function purge(item: FeeItem) {
+    if (!window.confirm(`Remove "${item.label}" from the list for good?\n\nThe money history stays in each pupil's ledger — only the item disappears.`)) return;
+    try {
+      await api.admin.deleteFeeItem(item.id);
+      toast({ kind: "ok", text: `${item.label} removed` });
+      load();
+    } catch (e) {
+      toast({ kind: "err", text: e instanceof Error ? e.message : "Could not remove." });
+    }
+  }
+
+  async function restore(item: FeeItem) {
+    try {
+      await api.admin.restoreFeeItem(item.id);
+      toast({ kind: "ok", text: `${item.label} is back in the list — bill it when you're ready` });
+      load();
+    } catch (e) {
+      toast({ kind: "err", text: e instanceof Error ? e.message : "Could not restore." });
+    }
+  }
 
   return (
     <>
@@ -141,21 +154,66 @@ export default function FeesPage() {
             action={<Button onClick={() => setModal("item")}>+ Add a fee item</Button>}
           />
         )}
-        {items && items.length > 0 && (
+        {active.length > 0 && (
           <Card className="overflow-hidden">
-            {items.map((i) => (
+            {active.map((i) => (
               <div key={i.id} className="flex flex-wrap items-center gap-3 border-b border-[#F0F0EE] px-5 py-3.5 last:border-0">
                 <span className="flex-1">
                   <span className="text-sm font-bold">{i.label}</span>
-                  <span className="block text-[12px] text-text-muted">{i.className}</span>
+                  <span className="block text-[12px] text-text-muted">
+                    {i.className}
+                    {i.billedCount > 0 && ` · billed to ${i.billedCount} pupil${i.billedCount === 1 ? "" : "s"}`}
+                  </span>
                 </span>
                 <span className="text-sm font-bold">{money(i.amount)}</span>
                 <Button variant="ghost" onClick={() => bill(i)}>
                   Bill to class
                 </Button>
+                <button
+                  onClick={() => {
+                    setDropTarget(i);
+                    setModal("drop");
+                  }}
+                  className="text-[12px] font-bold text-text-muted hover:text-danger"
+                >
+                  {i.billedCount > 0 ? "Withdraw" : "Delete"}
+                </button>
               </div>
             ))}
           </Card>
+        )}
+
+        {withdrawn.length > 0 && (
+          <div className="mt-3">
+            <button
+              onClick={() => setShowWithdrawn((v) => !v)}
+              className="text-[12.5px] font-bold text-text-muted hover:text-brand-link"
+            >
+              {showWithdrawn ? "▾" : "▸"} {withdrawn.length} withdrawn item{withdrawn.length === 1 ? "" : "s"}
+            </button>
+            {showWithdrawn && (
+              <Card className="mt-2 overflow-hidden bg-[#FAFAF8]">
+                {withdrawn.map((i) => (
+                  <div key={i.id} className="flex flex-wrap items-center gap-3 border-b border-[#F0F0EE] px-5 py-3 last:border-0">
+                    <span className="flex-1">
+                      <span className="text-sm font-bold text-text-secondary line-through">{i.label}</span>
+                      <span className="block text-[12px] text-text-muted">
+                        {i.className}
+                        {i.archivedReason && ` · ${i.archivedReason}`}
+                      </span>
+                    </span>
+                    <span className="text-[13px] font-semibold text-text-muted">{money(i.amount)}</span>
+                    <button onClick={() => restore(i)} className="text-[12px] font-bold text-brand-link">
+                      Restore
+                    </button>
+                    <button onClick={() => purge(i)} className="text-[12px] font-bold text-text-muted hover:text-danger">
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </Card>
+            )}
+          </div>
         )}
       </div>
 
@@ -200,11 +258,13 @@ export default function FeesPage() {
                       <td className="px-5 py-3 text-[13.5px] text-text-secondary">{r.className}</td>
                       <td className="px-5 py-3 text-[13.5px]">{money(r.billed)}</td>
                       <td className="px-5 py-3 text-[13.5px] text-success">{money(r.paid)}</td>
-                      <td className="px-5 py-3 text-sm font-bold">{money(r.balance)}</td>
+                      <td className="px-5 py-3 text-sm font-bold">
+                        {r.credit > 0 ? <span className="text-success">+{money(r.credit)}</span> : money(r.balance)}
+                      </td>
                       <td className="px-5 py-3">
                         <Badge
                           label={r.status}
-                          tone={r.status === "Paid" ? "green" : r.status === "Part-paid" ? "amber" : r.status === "Not billed" ? "grey" : "red"}
+                          tone={r.status === "Paid" || r.status === "In credit" ? "green" : r.status === "Part-paid" ? "amber" : r.status === "Not billed" ? "grey" : "red"}
                         />
                       </td>
                       <td className="px-5 py-3 text-right">
@@ -226,6 +286,15 @@ export default function FeesPage() {
                             className="text-text-muted hover:text-brand-link"
                           >
                             Discount
+                          </button>
+                          <button
+                            onClick={() => {
+                              setTarget(r);
+                              setModal("waive");
+                            }}
+                            className="text-text-muted hover:text-danger"
+                          >
+                            Drop a fee
                           </button>
                         </span>
                       </td>
@@ -274,8 +343,175 @@ export default function FeesPage() {
         />
       )}
 
+      {modal === "drop" && dropTarget && (
+        <DropFeeItemModal
+          item={dropTarget}
+          onClose={() => setModal(null)}
+          onDone={(msg) => {
+            setModal(null);
+            load();
+            toast({ kind: "ok", text: msg });
+          }}
+        />
+      )}
+
+      {modal === "waive" && target && (
+        <WaiveFeeModal
+          row={target}
+          onClose={() => setModal(null)}
+          onDone={(msg) => {
+            setModal(null);
+            load();
+            toast({ kind: "ok", text: msg });
+          }}
+        />
+      )}
+
       {toastNode}
     </>
+  );
+}
+
+/**
+ * Dropping a fee item is two different operations wearing one button.
+ *
+ * Nothing billed yet — it just goes. Already billed — the charges have to be reversed
+ * on every pupil, so the school is told exactly how many are affected and asked why
+ * before anything moves. The reason lands in the ledger next to each reversal, which
+ * is what makes the question worth asking.
+ */
+function DropFeeItemModal({ item, onClose, onDone }: { item: FeeItem; onClose: () => void; onDone: (msg: string) => void }) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const billed = item.billedCount > 0;
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      if (billed) {
+        const r = await api.admin.withdrawFeeItem(item.id, reason);
+        onDone(`${item.label} withdrawn — ${money(r.amount)} reversed across ${r.reversed} pupil(s)`);
+      } else {
+        await api.admin.deleteFeeItem(item.id);
+        onDone(`${item.label} deleted`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not drop this fee item.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={billed ? `Withdraw ${item.label}?` : `Delete ${item.label}?`} onClose={onClose}>
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        {billed ? (
+          <>
+            <p className="rounded-[10px] bg-[#FFF7DF] px-3.5 py-3 text-[13px] leading-relaxed text-[#8A6200]">
+              This item is billed to <strong>{item.billedCount}</strong> pupil(s) at {money(item.amount)} each. Withdrawing it
+              reverses those charges for the current term, so balances drop — and anyone who already paid is left with a credit
+              rather than losing the money. Past terms are untouched.
+            </p>
+            <Field label="Why is it being withdrawn?" hint="Recorded against every reversal, so the ledger explains itself later">
+              <input
+                className={inputClass}
+                required
+                autoFocus
+                maxLength={200}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Excursion cancelled"
+              />
+            </Field>
+          </>
+        ) : (
+          <p className="text-[13.5px] leading-relaxed text-text-secondary">
+            No pupil has been billed for this yet, so it can be removed outright. Nothing else changes.
+          </p>
+        )}
+        {error && <p className="rounded-[10px] bg-danger-tint px-3.5 py-2.5 text-[13px] font-medium text-danger">{error}</p>}
+        <Button type="submit" className="!py-3" disabled={busy}>
+          {busy ? "Working…" : billed ? "Withdraw and reverse charges" : "Delete fee item"}
+        </Button>
+      </form>
+    </Modal>
+  );
+}
+
+/**
+ * Drops one fee from one pupil — the child who does not take the bus, or who left
+ * mid-term. Only what the pupil is actually carrying this term is offered, so the
+ * school can't waive something that was never billed.
+ */
+function WaiveFeeModal({ row, onClose, onDone }: { row: OverviewRow; onClose: () => void; onDone: (msg: string) => void }) {
+  const [charges, setCharges] = useState<{ feeLineItemId: string; label: string; amount: number; netAmount: number }[] | null>(null);
+  const [feeLineItemId, setFeeLineItemId] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.admin
+      .studentCharges(row.studentId)
+      .then((c) => {
+        setCharges(c);
+        setFeeLineItemId(c[0]?.feeLineItemId ?? "");
+      })
+      .catch(() => setCharges([]));
+  }, [row.studentId]);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.admin.waiveFee({ studentId: row.studentId, feeLineItemId, reason });
+      onDone(`${money(r.amount)} dropped from ${row.name}'s bill`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not drop that fee.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={`Drop a fee for ${row.name}`} onClose={onClose}>
+      {charges === null ? (
+        <Skeleton rows={2} />
+      ) : charges.length === 0 ? (
+        <EmptyState icon="🧾" title="Nothing billed this term" hint="There is no charge to drop for this pupil yet." />
+      ) : (
+        <form onSubmit={submit} className="flex flex-col gap-4">
+          <p className="text-[13px] leading-relaxed text-text-secondary">
+            Removes the charge from this pupil only. The rest of the class keeps it.
+          </p>
+          <Field label="Which fee?">
+            <select className={inputClass} required value={feeLineItemId} onChange={(e) => setFeeLineItemId(e.target.value)}>
+              {charges.map((c) => (
+                <option key={c.feeLineItemId} value={c.feeLineItemId}>
+                  {c.label} — {money(c.amount)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Why?" hint="Kept in the ledger beside the reversal">
+            <input
+              className={inputClass}
+              required
+              maxLength={200}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Does not use school transport"
+            />
+          </Field>
+          {error && <p className="rounded-[10px] bg-danger-tint px-3.5 py-2.5 text-[13px] font-medium text-danger">{error}</p>}
+          <Button type="submit" className="!py-3" disabled={busy}>
+            {busy ? "Working…" : "Drop this fee"}
+          </Button>
+        </form>
+      )}
+    </Modal>
   );
 }
 

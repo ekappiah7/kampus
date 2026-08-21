@@ -8,10 +8,11 @@ steps:
         corepack enable
         pnpm install --frozen-lockfile
         pnpm --filter @kampus/db generate
-        # The schema changed substantially and the old migration history no longer
-        # exists, so reset rather than deploy. Safe here by design: the platform is
-        # meant to start empty and every record is created live during the demo.
-        pnpm --filter @kampus/db exec prisma migrate reset --force --skip-generate --skip-seed
+        # Additive only. The database now holds the school's own account and its
+        # website content, so a reset would destroy real work — new migrations go on
+        # top. If a change ever genuinely needs a rebuild, that is a deliberate
+        # decision to make at the time, not the default this job reaches for.
+        pnpm --filter @kampus/db exec prisma migrate deploy
         pnpm --filter @kampus/db exec prisma migrate status
     secretEnv: ["DATABASE_URL"]
 availableSecrets:

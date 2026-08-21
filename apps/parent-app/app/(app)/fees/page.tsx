@@ -97,6 +97,13 @@ export default function FeesScreen() {
                   ✓ Fully paid — thank you
                 </p>
               )}
+              {/* A withdrawn fee that was already paid leaves money on the account —
+                  say so plainly rather than quietly showing a zero balance. */}
+              {statement.credit > 0 && (
+                <p className="mt-3 rounded-[10px] bg-white/10 px-3 py-2 text-[12.5px] font-semibold text-[#FFE08A]">
+                  {money(statement.credit)} in credit — carried to your next bill
+                </p>
+              )}
             </div>
 
             {statement.lines.length === 0 ? (

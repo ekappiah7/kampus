@@ -19,6 +19,46 @@ import type {
   SubjectGrade,
 } from "@kampus/shared-types";
 
+export interface FeeItemView {
+  id: string;
+  label: string;
+  amount: number;
+  classId: string | null;
+  className: string;
+  archived: boolean;
+  archivedReason: string | null;
+  /** How many pupil charges exist for this item — decides delete vs withdraw. */
+  billedCount: number;
+}
+
+export interface FeeOverviewRow {
+  studentId: string;
+  name: string;
+  className: string;
+  billed: number;
+  paid: number;
+  balance: number;
+  credit: number;
+  status: string;
+}
+
+/** What an uploaded mark sheet would change, or did change when committed. */
+export interface MarkSheetImportReport {
+  committed: boolean;
+  subject: { id: string; name: string };
+  class: { id: string; name: string };
+  term: { id: string; name: string };
+  updated: number;
+  pending: number;
+  unchanged: number;
+  changes: { name: string; column: string; from: number | null; to: number }[];
+  changeCount: number;
+  outOfRange: { name: string; column: string; score: number; max: number }[];
+  unmatchedPupils: string[];
+  unmatchedColumns: string[];
+  problems: string[];
+}
+
 export interface ApiClientOptions {
   baseUrl: string;
   getToken?: () => string | null | undefined;
@@ -82,6 +122,70 @@ export function createApiClient({ baseUrl, getToken, onUnauthorized }: ApiClient
     return (await res.json()) as T;
   }
 
+  /**
+   * Fetches a file and hands it to the browser's downloads.
+   *
+   * Can't go through `request` — that parses JSON, and these endpoints return a
+   * spreadsheet. The auth header still has to be attached by hand, which is why a
+   * plain link to the URL would not work.
+   */
+  async function download(path: string, fallbackName: string): Promise<void> {
+    const token = getToken?.();
+    let res: Response;
+    try {
+      res = await fetch(`${baseUrl}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    } catch {
+      throw new ApiError(0, "Can't reach the server. Check your connection and try again.");
+    }
+    if (res.status === 401) {
+      onUnauthorized?.();
+      throw new ApiError(401, "Your session has expired. Please sign in again.");
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, readableError(body, "That file could not be prepared."));
+    }
+
+    const disposition = res.headers.get("Content-Disposition") ?? "";
+    const named = /filename="?([^"]+)"?/.exec(disposition)?.[1];
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = named ?? fallbackName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoking immediately can cancel the download in some browsers.
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
+
+  /** Multipart POST. Content-Type is left unset so the browser writes its own boundary. */
+  async function upload<T>(path: string, file: File, field = "file"): Promise<T> {
+    const token = getToken?.();
+    const form = new FormData();
+    form.append(field, file);
+    let res: Response;
+    try {
+      res = await fetch(`${baseUrl}${path}`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      });
+    } catch {
+      throw new ApiError(0, "Can't reach the server. Check your connection and try again.");
+    }
+    if (res.status === 401) {
+      onUnauthorized?.();
+      throw new ApiError(401, "Your session has expired. Please sign in again.");
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, readableError(body, "That file could not be read."));
+    }
+    return (await res.json()) as T;
+  }
+
   const post = <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
   const patch = <T>(path: string, body: unknown) => request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
@@ -90,6 +194,8 @@ export function createApiClient({ baseUrl, getToken, onUnauthorized }: ApiClient
 
   return {
     request,
+    download,
+    upload,
     baseUrl,
 
     setup: {
@@ -176,8 +282,18 @@ export function createApiClient({ baseUrl, getToken, onUnauthorized }: ApiClient
       gradeSheet: (classId?: string, subjectId?: string) =>
         request<GradeSheet>(`/staff/grade-sheet${query({ classId, subjectId })}`),
       addComponent: (payload: unknown) => post("/staff/grade-sheet/components", payload),
+      removeComponent: (subjectId: string, componentKey: string) =>
+        del<{ ok: true; removed: number }>(`/staff/grade-sheet/components${query({ subjectId, componentKey })}`),
       saveGradeSheet: (subjectId: string, scores: { studentId: string; componentKey: string; score: number }[]) =>
         post<{ ok: true; updated: number }>("/staff/grade-sheet", { subjectId, scores }),
+      markSheetTemplate: (classId?: string, subjectId?: string) =>
+        download(`/staff/grade-sheet/template${query({ classId, subjectId })}`, "mark-sheet.xlsx"),
+      importMarkSheet: (file: File, opts: { classId?: string; subjectId?: string; commit?: boolean }) =>
+        upload<MarkSheetImportReport>(
+          `/staff/grade-sheet/import${query({ classId: opts.classId, subjectId: opts.subjectId, commit: opts.commit ? "1" : undefined })}`,
+          file,
+        ),
+      broadsheet: (classId?: string) => download(`/staff/broadsheet${query({ classId })}`, "broadsheet.xlsx"),
       createPost: (payload: unknown) => post("/staff/posts", payload),
       myPosts: () => request<{ id: string; kind: string; title: string; body: string; status: string; tag: string | null; createdAt: string }[]>("/staff/posts/mine"),
       approvals: () =>
@@ -241,14 +357,19 @@ export function createApiClient({ baseUrl, getToken, onUnauthorized }: ApiClient
           "/admin/parents",
         ),
       resetParentAccess: (id: string) => post<{ accessCode: string }>(`/admin/parents/${id}/reset-access`),
-      feeItems: () => request<{ id: string; label: string; amount: number; classId: string | null; className: string }[]>("/admin/fee-items"),
+      feeItems: (includeArchived?: boolean) =>
+        request<FeeItemView[]>(`/admin/fee-items${includeArchived ? "?includeArchived=1" : ""}`),
       createFeeItem: (payload: unknown) => post("/admin/fee-items", payload),
       deleteFeeItem: (id: string) => del(`/admin/fee-items/${id}`),
+      withdrawFeeItem: (id: string, reason: string) => post<{ reversed: number; amount: number }>(`/admin/fee-items/${id}/withdraw`, { reason }),
+      restoreFeeItem: (id: string) => post(`/admin/fee-items/${id}/restore`),
+      waiveFee: (payload: { studentId: string; feeLineItemId: string; reason: string }) =>
+        post<{ amount: number }>("/admin/fee-items/waive", payload),
+      studentCharges: (studentId: string) =>
+        request<{ feeLineItemId: string; label: string; amount: number; netAmount: number }[]>(`/admin/students/${studentId}/charges`),
       billFeeItem: (id: string) => post<{ billed: number }>(`/admin/fee-items/${id}/bill`),
       feeOverview: () =>
-        request<{ expected: number; collected: number; outstanding: number; rows: { studentId: string; name: string; className: string; billed: number; paid: number; balance: number; status: string }[] }>(
-          "/admin/fee-overview",
-        ),
+        request<{ expected: number; collected: number; outstanding: number; rows: FeeOverviewRow[] }>("/admin/fee-overview"),
       pendingCash: () =>
         request<{ id: string; reference: string | null; amount: number; studentName: string; parentName: string | null; createdAt: string }[]>(
           "/admin/payments/pending-cash",
