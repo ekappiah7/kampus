@@ -3,32 +3,96 @@
     {
       "target": "web",
       "public": "apps/web/public",
-      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-      "rewrites": [{ "source": "**", "run": { "serviceId": "kampus-web", "region": "us-central1" } }]
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "run": {
+            "serviceId": "kampus-web",
+            "region": "us-central1"
+          }
+        }
+      ]
     },
     {
       "target": "staff-portal",
       "public": "apps/staff-portal/public",
-      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
       "headers": [
         {
           "source": "/sw.js",
-          "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, must-revalidate"
+            }
+          ]
         }
       ],
-      "rewrites": [{ "source": "**", "run": { "serviceId": "kampus-staff-portal", "region": "us-central1" } }]
+      "rewrites": [
+        {
+          "source": "**",
+          "run": {
+            "serviceId": "kampus-staff-portal",
+            "region": "us-central1"
+          }
+        }
+      ]
     },
     {
       "target": "parent-app",
       "public": "apps/parent-app/public",
-      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
       "headers": [
         {
           "source": "/sw.js",
-          "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, must-revalidate"
+            }
+          ]
         }
       ],
-      "rewrites": [{ "source": "**", "run": { "serviceId": "kampus-parent-app", "region": "us-central1" } }]
+      "rewrites": [
+        {
+          "source": "**",
+          "run": {
+            "serviceId": "kampus-parent-app",
+            "region": "us-central1"
+          }
+        }
+      ]
+    },
+    {
+      "target": "marketing",
+      "public": "apps/marketing/public",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "run": {
+            "serviceId": "kampus-marketing",
+            "region": "us-central1"
+          }
+        }
+      ]
     }
   ]
 }

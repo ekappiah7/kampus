@@ -77,6 +77,28 @@ confirmation → attendance → weighted marks → homework approval gate → pi
 confirmed at the gate → report card published → website lead and Parent Voice
 landing in the admin inbox. All four packages typecheck; all three apps build.
 
+## The product site
+
+`apps/marketing` sells Kampus itself, to schools that don't have it — as distinct
+from `apps/web`, which is the site each customer school gets. Live at
+**akampuz-kampus.web.app**.
+
+Every claim it makes lives in `apps/marketing/lib/content.ts`, tagged `shipped`,
+`building` or `planned`, and the page renders that tag beside each capability. The
+honesty is the pitch: a prospect can check anything marked *Working today* on the
+live demo before signing, so the ones marked *In build* are believed too. Move a
+feature to `shipped` in the same change that ships it.
+
+Contact details in that file are **placeholders** and the WhatsApp button is dead
+until they're replaced. Pricing has the structure — per pupil, per term, three bands
+— and no numbers; `price: null` renders as "Talk to us".
+
+Demo requests post to `/public/product-lead` and land in `ProductLead`, which is
+deliberately not school-scoped: the school enquiring isn't a tenant yet. Reading
+them needs a vendor key, not a school login, so no administrator can read another
+school's enquiry. `node scripts/leads.mjs` lists them; `--handled <id>` and
+`--delete <id>` work the queue. A proper vendor console is the follow-up.
+
 ## Fees: dropping a charge
 
 A fee can be dropped three ways, and which one applies depends on how far it has

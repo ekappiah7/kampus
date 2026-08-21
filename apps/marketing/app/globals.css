@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-bg text-text-primary font-body;
+}
+
+.image-slot {
+  @apply flex items-center justify-center rounded-card border-2 border-dashed border-border bg-white/60 text-sm text-text-muted;
+}

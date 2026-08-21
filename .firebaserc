@@ -16,6 +16,9 @@
         ],
         "parent-app": [
           "akampuz-parent"
+        ],
+        "marketing": [
+          "akampuz-kampus"
         ]
       }
     }

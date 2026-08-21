@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { prisma } from "@kampus/db";
 
@@ -164,4 +164,72 @@ publicRouter.get("/cafeteria/:subdomain?", async (req, res) => {
   if (!school) return res.status(404).json({ error: "School not found" });
   const menu = await prisma.cafeteriaMenuItem.findMany({ where: { schoolId: school.id } });
   res.json(menu);
+});
+
+// ---------------------------------------------------------------------------
+// Vendor-level: enquiries from the Kampus product site
+// ---------------------------------------------------------------------------
+
+const productLeadSchema = z.object({
+  name: z.string().min(1).max(120),
+  role: z.string().min(1).max(80),
+  schoolName: z.string().min(1).max(160),
+  phone: z.string().min(6).max(40),
+  email: z.string().email().max(160).optional().or(z.literal("")),
+  size: z.string().max(40).optional(),
+  message: z.string().max(2000).optional(),
+  source: z.string().max(80).optional(),
+});
+
+/**
+ * A school asking about Kampus itself.
+ *
+ * Unauthenticated and unscoped — the school making the enquiry isn't a tenant yet.
+ * Kept deliberately dumb: store it and return, because a sales form that fails is a
+ * lost customer, and the site offers WhatsApp beside it for exactly that reason.
+ */
+publicRouter.post("/product-lead", async (req, res) => {
+  const parsed = productLeadSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Please check the form and try again." });
+
+  const { email, ...rest } = parsed.data;
+  await prisma.productLead.create({ data: { ...rest, email: email || null } });
+  res.status(201).json({ ok: true });
+});
+
+/**
+ * Everything below is guarded by a vendor key rather than tenant auth.
+ *
+ * These are the vendor's own sales enquiries. Putting them behind school admin auth
+ * would mean any school's administrator could read every other school's enquiry, so
+ * they get a separate key held only by the vendor. With no key configured the
+ * endpoints stay shut rather than falling open.
+ */
+function requireVendorKey(req: Request, res: Response, next: NextFunction) {
+  const expected = process.env.VENDOR_KEY;
+  if (!expected) return res.status(404).json({ error: "Not found" });
+  if (req.header("x-vendor-key") !== expected) return res.status(401).json({ error: "Unauthorised" });
+  next();
+}
+
+publicRouter.get("/product-leads", requireVendorKey, async (_req, res) => {
+  const leads = await prisma.productLead.findMany({ orderBy: { createdAt: "desc" }, take: 500 });
+  res.json(leads);
+});
+
+/** Marks an enquiry dealt with, so the list shows what still needs a call. */
+publicRouter.patch("/product-leads/:id", requireVendorKey, async (req, res) => {
+  const handled = typeof req.body?.handled === "boolean" ? req.body.handled : true;
+  const lead = await prisma.productLead.findUnique({ where: { id: req.params.id } });
+  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  await prisma.productLead.update({ where: { id: lead.id }, data: { handled } });
+  res.json({ ok: true, handled });
+});
+
+/** For spam and test entries. Real enquiries are better marked handled than deleted. */
+publicRouter.delete("/product-leads/:id", requireVendorKey, async (req, res) => {
+  const lead = await prisma.productLead.findUnique({ where: { id: req.params.id } });
+  if (!lead) return res.status(404).json({ error: "Lead not found" });
+  await prisma.productLead.delete({ where: { id: lead.id } });
+  res.json({ ok: true });
 });

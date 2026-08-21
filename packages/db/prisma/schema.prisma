@@ -875,3 +875,31 @@ model Message {
   @@index([threadId])
   @@map("messages")
 }
+
+/// ---------------------------------------------------------------------------
+/// Vendor-level, not tenant-level
+/// ---------------------------------------------------------------------------
+
+/// A school enquiring about Kampus itself, from the product marketing site.
+///
+/// Deliberately not scoped to a School: these are JAKBRAIN's own sales leads, and
+/// the school they refer to does not exist in the system yet — that is the point of
+/// the enquiry. Read access is guarded by a vendor key rather than tenant auth, so
+/// no school administrator can ever see another school's enquiry.
+model ProductLead {
+  id         String   @id @default(cuid())
+  name       String
+  role       String
+  schoolName String
+  phone      String
+  email      String?
+  size       String?
+  message    String?
+  /// Where the enquiry came from, for when there is more than one campaign.
+  source     String?
+  handled    Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("product_leads")
+}
