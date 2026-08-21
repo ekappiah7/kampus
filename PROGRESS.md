@@ -99,6 +99,28 @@ them needs a vendor key, not a school login, so no administrator can read anothe
 school's enquiry. `node scripts/leads.mjs` lists them; `--handled <id>` and
 `--delete <id>` work the queue. A proper vendor console is the follow-up.
 
+## People: editing and removing
+
+Pupils, guardians and staff can all be corrected in place — a misspelt name goes
+onto every report card and every fee statement, so fixing it is two clicks rather
+than a support call.
+
+Removal follows the same shape as dropping a fee: **deactivate** is the normal path
+and **delete** is only for records with nothing behind them. The server counts what
+depends on a person and refuses with the specific reason — "has 1 payment and 12
+recorded marks on record" — rather than a flat "cannot delete".
+
+The subtlety worth keeping: **billing is not history.** Adding a pupil bills them
+for the class's fee items immediately, so a pupil has a charge and a ledger row
+within a second of being created. Counting those as history would mean a name typed
+twice could never be removed, which is the case the feature exists for. Unpaid
+charges are derived billing and are cleared with the pupil; a single payment, mark,
+attendance record or report card stops the deletion dead.
+
+Other guards: you can't delete your own account, can't remove the school's only
+administrator, can't delete a guardian still linked to a pupil, and can't unlink the
+last guardian a pupil has.
+
 ## Fees: dropping a charge
 
 A fee can be dropped three ways, and which one applies depends on how far it has

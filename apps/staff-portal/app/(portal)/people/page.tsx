@@ -64,8 +64,11 @@ export default function PeoplePage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
-  const [modal, setModal] = useState<null | "student" | "staff" | "guardian">(null);
+  const [modal, setModal] = useState<null | "student" | "staff" | "guardian" | "editStudent" | "editStaff" | "editParent">(null);
   const [guardianFor, setGuardianFor] = useState<StudentRow | null>(null);
+  const [editStudent, setEditStudent] = useState<StudentRow | null>(null);
+  const [editStaff, setEditStaff] = useState<StaffRow | null>(null);
+  const [editParent, setEditParent] = useState<ParentRow | null>(null);
   const [issued, setIssued] = useState<{ name: string; code: string; audience: "staff" | "parent" } | null>(null);
   const { toast, toastNode } = useToast();
 
@@ -89,6 +92,38 @@ export default function PeoplePage() {
       load();
     } catch (e) {
       toast({ kind: "err", text: e instanceof Error ? e.message : "Could not reset access." });
+    }
+  }
+
+  /**
+   * Deleting a person only makes sense when there is nothing behind them — a name
+   * typed twice, a teacher added by mistake. The server refuses once they have a
+   * history and says what is holding it, so that message goes straight to the user
+   * rather than being flattened into "could not delete".
+   */
+  async function removePerson(kind: "pupil" | "parent" | "teacher", id: string, name: string) {
+    const alternative =
+      kind === "pupil" ? "\n\nIf they have simply left the school, use Deactivate instead." : "";
+    if (!window.confirm(`Remove ${name} permanently?${alternative}`)) return;
+    try {
+      if (kind === "pupil") await api.admin.deleteStudent(id);
+      else if (kind === "parent") await api.admin.deleteParent(id);
+      else await api.admin.deleteStaff(id);
+      toast({ kind: "ok", text: `${name} removed` });
+      load();
+    } catch (e) {
+      toast({ kind: "err", text: e instanceof Error ? e.message : "Could not remove." });
+    }
+  }
+
+  async function unlinkGuardian(student: StudentRow, parentId: string, parentName: string) {
+    if (!window.confirm(`Unlink ${parentName} from ${student.name}?\n\nThe parent's own account is not deleted.`)) return;
+    try {
+      await api.admin.unlinkGuardian(student.id, parentId);
+      toast({ kind: "ok", text: `${parentName} unlinked` });
+      load();
+    } catch (e) {
+      toast({ kind: "err", text: e instanceof Error ? e.message : "Could not unlink." });
     }
   }
 
@@ -204,12 +239,27 @@ export default function PeoplePage() {
                         <td className="px-5 py-3 text-[13.5px] text-text-secondary">{s.className}</td>
                         <td className="px-5 py-3">
                           {s.guardians.length ? (
-                            <span className="text-[13px]">
-                              <span className="block font-semibold">{s.guardians[0]!.name}</span>
-                              <span className="block text-[11.5px] text-text-muted">
-                                {s.guardians[0]!.relation} · {s.guardians[0]!.phone}
-                                {s.guardians.length > 1 ? ` +${s.guardians.length - 1}` : ""}
-                              </span>
+                            <span className="flex flex-col gap-1.5 text-[13px]">
+                              {s.guardians.map((g) => (
+                                <span key={g.id} className="group/g flex items-baseline gap-2">
+                                  <span>
+                                    <span className="block font-semibold">{g.name}</span>
+                                    <span className="block text-[11.5px] text-text-muted">
+                                      {g.relation} · {g.phone}
+                                    </span>
+                                  </span>
+                                  {/* A pupil must keep at least one guardian, so the
+                                      control only appears when there is a spare. */}
+                                  {s.guardians.length > 1 && (
+                                    <button
+                                      onClick={() => unlinkGuardian(s, g.id, g.name)}
+                                      className="text-[11px] font-bold text-text-muted opacity-0 transition-opacity hover:text-danger group-hover/g:opacity-100"
+                                    >
+                                      unlink
+                                    </button>
+                                  )}
+                                </span>
+                              ))}
                             </span>
                           ) : (
                             <button
@@ -243,8 +293,23 @@ export default function PeoplePage() {
                             >
                               + Guardian
                             </button>
+                            <button
+                              onClick={() => {
+                                setEditStudent(s);
+                                setModal("editStudent");
+                              }}
+                              className="text-text-muted hover:text-brand-link"
+                            >
+                              Edit
+                            </button>
                             <button onClick={() => toggleActive(s)} className="text-text-muted hover:text-danger">
                               {s.active ? "Deactivate" : "Restore"}
+                            </button>
+                            <button
+                              onClick={() => removePerson("pupil", s.id, s.name)}
+                              className="text-text-muted hover:text-danger"
+                            >
+                              Delete
                             </button>
                           </span>
                         </td>
@@ -304,16 +369,33 @@ export default function PeoplePage() {
                           </span>
                         </td>
                         <td className="px-5 py-3 text-right">
-                          <button
-                            onClick={() =>
-                              s.pendingAccessCode
-                                ? setIssued({ name: s.name, code: s.pendingAccessCode, audience: "staff" })
-                                : resetAccess("staff", s.id, s.name)
-                            }
-                            className="text-[12px] font-bold text-brand-link"
-                          >
-                            {s.pendingAccessCode ? "Show code" : "Reset access"}
-                          </button>
+                          <span className="flex justify-end gap-3 text-[12px] font-bold">
+                            <button
+                              onClick={() =>
+                                s.pendingAccessCode
+                                  ? setIssued({ name: s.name, code: s.pendingAccessCode, audience: "staff" })
+                                  : resetAccess("staff", s.id, s.name)
+                              }
+                              className="text-brand-link"
+                            >
+                              {s.pendingAccessCode ? "Show code" : "Reset access"}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditStaff(s);
+                                setModal("editStaff");
+                              }}
+                              className="text-text-muted hover:text-brand-link"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => removePerson("teacher", s.id, s.name)}
+                              className="text-text-muted hover:text-danger"
+                            >
+                              Delete
+                            </button>
+                          </span>
                         </td>
                       </tr>
                     ))}
@@ -361,16 +443,33 @@ export default function PeoplePage() {
                           {p.children.map((c) => `${c.name} (${c.relation})`).join(", ") || "—"}
                         </td>
                         <td className="px-5 py-3 text-right">
-                          <button
-                            onClick={() =>
-                              p.pendingAccessCode
-                                ? setIssued({ name: p.name, code: p.pendingAccessCode, audience: "parent" })
-                                : resetAccess("parent", p.id, p.name)
-                            }
-                            className="text-[12px] font-bold text-brand-link"
-                          >
-                            {p.pendingAccessCode ? "Show code" : "Reset access"}
-                          </button>
+                          <span className="flex justify-end gap-3 text-[12px] font-bold">
+                            <button
+                              onClick={() =>
+                                p.pendingAccessCode
+                                  ? setIssued({ name: p.name, code: p.pendingAccessCode, audience: "parent" })
+                                  : resetAccess("parent", p.id, p.name)
+                              }
+                              className="text-brand-link"
+                            >
+                              {p.pendingAccessCode ? "Show code" : "Reset access"}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditParent(p);
+                                setModal("editParent");
+                              }}
+                              className="text-text-muted hover:text-brand-link"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => removePerson("parent", p.id, p.name)}
+                              className="text-text-muted hover:text-danger"
+                            >
+                              Delete
+                            </button>
+                          </span>
                         </td>
                       </tr>
                     ))}
@@ -436,10 +535,237 @@ export default function PeoplePage() {
         </Modal>
       )}
 
+      {modal === "editStudent" && editStudent && (
+        <EditStudentModal
+          student={editStudent}
+          classes={classes}
+          onClose={() => setModal(null)}
+          onDone={() => {
+            setModal(null);
+            load();
+            toast({ kind: "ok", text: "Pupil updated" });
+          }}
+        />
+      )}
+
+      {modal === "editStaff" && editStaff && (
+        <EditStaffModal
+          staff={editStaff}
+          classes={classes}
+          onClose={() => setModal(null)}
+          onDone={() => {
+            setModal(null);
+            load();
+            toast({ kind: "ok", text: "Staff member updated" });
+          }}
+        />
+      )}
+
+      {modal === "editParent" && editParent && (
+        <EditParentModal
+          parent={editParent}
+          onClose={() => setModal(null)}
+          onDone={() => {
+            setModal(null);
+            load();
+            toast({ kind: "ok", text: "Guardian updated" });
+          }}
+        />
+      )}
+
       {toastNode}
     </>
   );
 }
+
+/**
+ * Correcting a record already in the register.
+ *
+ * A misspelt name is the commonest thing a school will ever need to fix — it goes
+ * onto every report card and every fee statement — so it should take two clicks,
+ * not a call to support.
+ */
+function EditStudentModal({
+  student,
+  classes,
+  onClose,
+  onDone,
+}: {
+  student: StudentRow;
+  classes: { id: string; name: string }[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [form, setForm] = useState({
+    name: student.name,
+    admissionNo: student.admissionNo ?? "",
+    classId: student.classId,
+    monitored: student.monitored,
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api.admin.updateStudent(student.id, { ...form, admissionNo: form.admissionNo || undefined });
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save those changes.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={`Edit ${student.name}`} onClose={onClose}>
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        <Field label="Full name" hint="Exactly as it should appear on report cards">
+          <input className={inputClass} required autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Admission number">
+            <input className={inputClass} value={form.admissionNo} onChange={(e) => setForm({ ...form, admissionNo: e.target.value })} />
+          </Field>
+          <Field label="Class">
+            <select className={inputClass} value={form.classId} onChange={(e) => setForm({ ...form, classId: e.target.value })}>
+              {classes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <label className="flex items-center gap-2.5 text-[14px] font-semibold">
+          <input type="checkbox" checked={form.monitored} onChange={(e) => setForm({ ...form, monitored: e.target.checked })} />
+          Flag as needing extra attention
+        </label>
+        {error && <p className="rounded-[10px] bg-danger-tint px-3.5 py-2.5 text-[13px] font-medium text-danger">{error}</p>}
+        <Button type="submit" className="!py-3" disabled={busy}>
+          {busy ? "Saving…" : "Save changes"}
+        </Button>
+      </form>
+    </Modal>
+  );
+}
+
+function EditStaffModal({
+  staff,
+  classes,
+  onClose,
+  onDone,
+}: {
+  staff: StaffRow;
+  classes: { id: string; name: string }[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [form, setForm] = useState({
+    name: staff.name,
+    email: staff.email,
+    phone: staff.phone ?? "",
+    title: staff.title ?? "",
+    status: staff.status,
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api.admin.updateStaff(staff.id, {
+        ...form,
+        phone: form.phone || undefined,
+        title: form.title || undefined,
+      });
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save those changes.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={`Edit ${staff.name}`} onClose={onClose}>
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        <Field label="Full name">
+          <input className={inputClass} required autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        </Field>
+        <Field label="Email" hint="This is how they sign in">
+          <input className={inputClass} type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Phone">
+            <input className={inputClass} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+          </Field>
+          <Field label="Title">
+            <input className={inputClass} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Class Teacher" />
+          </Field>
+        </div>
+        <Field label="Status" hint="Inactive keeps their record and their trail, but stops them signing in">
+          <select className={inputClass} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+            <option value="ACTIVE">Active</option>
+            <option value="ON_LEAVE">On leave</option>
+            <option value="INACTIVE">Inactive</option>
+          </select>
+        </Field>
+        {error && <p className="rounded-[10px] bg-danger-tint px-3.5 py-2.5 text-[13px] font-medium text-danger">{error}</p>}
+        <Button type="submit" className="!py-3" disabled={busy}>
+          {busy ? "Saving…" : "Save changes"}
+        </Button>
+      </form>
+    </Modal>
+  );
+}
+
+function EditParentModal({ parent, onClose, onDone }: { parent: ParentRow; onClose: () => void; onDone: () => void }) {
+  const [form, setForm] = useState({ name: parent.name, phone: parent.phone, email: parent.email ?? "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api.admin.updateParent(parent.id, form);
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save those changes.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={`Edit ${parent.name}`} onClose={onClose}>
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        <Field label="Full name">
+          <input className={inputClass} required autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        </Field>
+        <Field label="Phone" hint="This is how they sign in to the Parent App">
+          <input className={inputClass} required value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+        </Field>
+        <Field label="Email (optional)">
+          <input className={inputClass} type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+        </Field>
+        {parent.children.length > 0 && (
+          <p className="rounded-[10px] bg-bg px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-secondary">
+            Guardian of {parent.children.map((c) => c.name).join(", ")}.
+          </p>
+        )}
+        {error && <p className="rounded-[10px] bg-danger-tint px-3.5 py-2.5 text-[13px] font-medium text-danger">{error}</p>}
+        <Button type="submit" className="!py-3" disabled={busy}>
+          {busy ? "Saving…" : "Save changes"}
+        </Button>
+      </form>
+    </Modal>
+  );
+}
+
 
 function AddStudentModal({
   classes,

@@ -551,6 +551,231 @@ adminRouter.post("/parents/:id/reset-access", async (req, res) => {
   res.json({ accessCode: code });
 });
 
+
+// ---------------------------------------------------------------------------
+// Editing and removing people
+// ---------------------------------------------------------------------------
+
+/**
+ * Removing a person is two operations, and which one applies depends on whether
+ * they have a history in the school.
+ *
+ * A pupil who was typed in twice, or a teacher added by mistake, should just go.
+ * A pupil who has a term of marks, attendance and a fee ledger must not — deleting
+ * them would silently rewrite the school's own records, and "the child left" is a
+ * different fact from "the child was never here". That case is a deactivation,
+ * which the register already supports.
+ *
+ * So: count what depends on the record, and let the count decide.
+ */
+/**
+ * Billing is *not* history.
+ *
+ * Adding a pupil bills them for the class's fee items straight away, so a pupil has
+ * a charge and a ledger row within a second of being created. Counting those as
+ * history would mean a name typed twice could never be removed — which is exactly
+ * the case this feature exists for.
+ *
+ * What actually can't be undone is money that moved and school work that happened.
+ * So a pupil's unpaid charges are derived billing, cleared with them; a single
+ * payment, mark or attendance record stops the deletion dead.
+ */
+async function studentHistory(studentId: string) {
+  const [attendance, marks, payments, settled, reportCards, pickups, homework] = await Promise.all([
+    prisma.attendanceRecord.count({ where: { studentId } }),
+    prisma.assessmentEntry.count({ where: { studentId } }),
+    prisma.payment.count({ where: { studentId } }),
+    prisma.feeLedgerEntry.count({ where: { studentId, type: "PAYMENT" } }),
+    prisma.reportCard.count({ where: { studentId } }),
+    prisma.pickupNotice.count({ where: { studentId } }),
+    prisma.postStudentStatus.count({ where: { studentId } }),
+  ]);
+  return [
+    { one: "attendance record", many: "attendance records", n: attendance },
+    { one: "recorded mark", many: "recorded marks", n: marks },
+    { one: "payment", many: "payments", n: Math.max(payments, settled) },
+    { one: "report card", many: "report cards", n: reportCards },
+    { one: "pickup notice", many: "pickup notices", n: pickups },
+    { one: "homework record", many: "homework records", n: homework },
+  ].filter((r) => r.n > 0);
+}
+
+async function parentHistory(parentId: string) {
+  const [payments, pickups, voice, messages] = await Promise.all([
+    prisma.payment.count({ where: { parentId } }),
+    prisma.pickupNotice.count({ where: { requestedByParentId: parentId } }),
+    prisma.parentVoiceSubmission.count({ where: { parentId } }),
+    prisma.message.count({ where: { senderParentId: parentId } }),
+  ]);
+  return [
+    { one: "payment", many: "payments", n: payments },
+    { one: "pickup notice", many: "pickup notices", n: pickups },
+    { one: "Parent Voice message", many: "Parent Voice messages", n: voice },
+    { one: "message", many: "messages", n: messages },
+  ].filter((r) => r.n > 0);
+}
+
+async function staffHistory(staffId: string) {
+  const [posts, attendance, marks, ledger, pickups, discounts, messages] = await Promise.all([
+    prisma.post.count({ where: { authorStaffId: staffId } }),
+    prisma.attendanceRecord.count({ where: { markedByStaffId: staffId } }),
+    prisma.assessmentEntry.count({ where: { enteredByStaffId: staffId } }),
+    prisma.feeLedgerEntry.count({ where: { createdByStaffId: staffId } }),
+    prisma.pickupNotice.count({ where: { confirmedByStaffId: staffId } }),
+    prisma.discount.count({ where: { appliedByStaffId: staffId } }),
+    prisma.message.count({ where: { senderStaffId: staffId } }),
+  ]);
+  return [
+    { one: "post", many: "posts", n: posts },
+    { one: "attendance register", many: "attendance registers", n: attendance },
+    { one: "recorded mark", many: "recorded marks", n: marks },
+    { one: "ledger entry", many: "ledger entries", n: ledger },
+    { one: "confirmed pickup", many: "confirmed pickups", n: pickups },
+    { one: "discount", many: "discounts", n: discounts },
+    { one: "message", many: "messages", n: messages },
+  ].filter((r) => r.n > 0);
+}
+
+/** "3 attendance records and 12 recorded marks" — plain enough to act on. */
+function describeHistory(rows: { one: string; many: string; n: number }[]): string {
+  const parts = rows.map((r) => `${r.n} ${r.n === 1 ? r.one : r.many}`);
+  if (parts.length === 1) return parts[0]!;
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+adminRouter.delete("/students/:id", async (req, res) => {
+  const schoolId = req.auth!.schoolId;
+  const student = await prisma.student.findFirst({ where: { id: req.params.id, schoolId } });
+  if (!student) return res.status(404).json({ error: "Pupil not found" });
+
+  const history = await studentHistory(student.id);
+  if (history.length) {
+    return res.status(409).json({
+      error: `${student.name} has ${describeHistory(history)} on record. Deactivate instead — that keeps the history and takes them off the register.`,
+      history,
+    });
+  }
+
+  // Guardian links cascade. The billing rows do not, and they are derived — the
+  // pupil was auto-billed on creation and never paid — so they go with the pupil.
+  await prisma.$transaction([
+    prisma.feeLedgerEntry.deleteMany({ where: { studentId: student.id } }),
+    prisma.studentFeeCharge.deleteMany({ where: { studentId: student.id } }),
+    prisma.scholarshipCoverage.deleteMany({ where: { scholarship: { studentId: student.id } } }),
+    prisma.scholarship.deleteMany({ where: { studentId: student.id } }),
+    prisma.discount.deleteMany({ where: { studentId: student.id } }),
+    prisma.student.delete({ where: { id: student.id } }),
+  ]);
+  audit(req.auth!, "student.delete", { schoolId, entity: `student:${student.id}`, detail: student.name });
+  res.json({ ok: true });
+});
+
+adminRouter.delete("/parents/:id", async (req, res) => {
+  const schoolId = req.auth!.schoolId;
+  const parent = await prisma.parent.findFirst({ where: { id: req.params.id, schoolId } });
+  if (!parent) return res.status(404).json({ error: "Parent not found" });
+
+  const history = await parentHistory(parent.id);
+  if (history.length) {
+    return res.status(409).json({
+      error: `${parent.name} has ${describeHistory(history)} on record and cannot be removed.`,
+      history,
+    });
+  }
+
+  const children = await prisma.parentStudent.count({ where: { parentId: parent.id } });
+  if (children > 0) {
+    return res.status(409).json({
+      error: `${parent.name} is still linked to ${children} pupil(s). Unlink them first, so no child is left without a guardian.`,
+    });
+  }
+
+  await prisma.parent.delete({ where: { id: parent.id } });
+  audit(req.auth!, "parent.delete", { schoolId, entity: `parent:${parent.id}`, detail: parent.name });
+  res.json({ ok: true });
+});
+
+adminRouter.delete("/staff/:id", async (req, res) => {
+  const schoolId = req.auth!.schoolId;
+  const staff = await prisma.staff.findFirst({ where: { id: req.params.id, schoolId } });
+  if (!staff) return res.status(404).json({ error: "Staff member not found" });
+
+  if (staff.id === req.auth!.id) {
+    return res.status(400).json({ error: "You can't remove your own account." });
+  }
+  if (staff.role === "ADMIN") {
+    const admins = await prisma.staff.count({ where: { schoolId, role: "ADMIN" } });
+    if (admins <= 1) return res.status(400).json({ error: "This is the school's only administrator." });
+  }
+
+  const history = await staffHistory(staff.id);
+  if (history.length) {
+    return res.status(409).json({
+      error: `${staff.name} has ${describeHistory(history)} on record. Set them to Inactive instead — that keeps the trail of who did what.`,
+      history,
+    });
+  }
+
+  await prisma.staff.delete({ where: { id: staff.id } });
+  audit(req.auth!, "staff.delete", { schoolId, entity: `staff:${staff.id}`, detail: staff.name });
+  res.json({ ok: true });
+});
+
+const parentUpdateSchema = z.object({
+  name: z.string().min(2).optional(),
+  phone: z.string().min(6).optional(),
+  email: z.string().email().optional().or(z.literal("")),
+});
+
+adminRouter.patch("/parents/:id", async (req, res) => {
+  const parsed = parentUpdateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const schoolId = req.auth!.schoolId;
+  const parent = await prisma.parent.findFirst({ where: { id: req.params.id, schoolId } });
+  if (!parent) return res.status(404).json({ error: "Parent not found" });
+
+  const { phone, email, ...rest } = parsed.data;
+  // Phone is the parent's login, and it is unique per school — a clash has to be a
+  // clear message rather than a database error.
+  if (phone) {
+    const normalised = normalisePhone(phone);
+    const clash = await prisma.parent.findFirst({ where: { schoolId, phone: normalised, NOT: { id: parent.id } } });
+    if (clash) return res.status(409).json({ error: `${clash.name} already uses that phone number.` });
+  }
+
+  const updated = await prisma.parent.update({
+    where: { id: parent.id },
+    data: {
+      ...rest,
+      ...(phone ? { phone: normalisePhone(phone) } : {}),
+      ...(email !== undefined ? { email: email || null } : {}),
+    },
+  });
+  audit(req.auth!, "parent.update", { schoolId, entity: `parent:${parent.id}`, detail: parent.name });
+  res.json(updated);
+});
+
+/** Removes one guardian link, without touching the parent or the pupil. */
+adminRouter.delete("/students/:id/guardians/:parentId", async (req, res) => {
+  const schoolId = req.auth!.schoolId;
+  const student = await prisma.student.findFirst({ where: { id: req.params.id, schoolId } });
+  if (!student) return res.status(404).json({ error: "Pupil not found" });
+
+  const link = await prisma.parentStudent.findUnique({
+    where: { parentId_studentId: { parentId: req.params.parentId, studentId: student.id } },
+  });
+  if (!link) return res.status(404).json({ error: "That guardian is not linked to this pupil." });
+
+  const remaining = await prisma.parentStudent.count({ where: { studentId: student.id } });
+  if (remaining <= 1) {
+    return res.status(409).json({ error: "Add another guardian first — a pupil must always have at least one." });
+  }
+
+  await prisma.parentStudent.delete({ where: { id: link.id } });
+  audit(req.auth!, "guardian.unlink", { schoolId, entity: `student:${student.id}`, detail: student.name });
+  res.json({ ok: true });
+});
+
 // ---------------------------------------------------------------------------
 // Fees: line items, billing, scholarships, discounts, cash confirmation
 // ---------------------------------------------------------------------------

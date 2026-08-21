@@ -339,6 +339,7 @@ export function createApiClient({ baseUrl, getToken, onUnauthorized }: ApiClient
         ),
       createStaff: (payload: unknown) => post<{ id: string; name: string; email: string; accessCode: string }>("/admin/staff", payload),
       updateStaff: (id: string, payload: unknown) => patch(`/admin/staff/${id}`, payload),
+      deleteStaff: (id: string) => del(`/admin/staff/${id}`),
       resetStaffAccess: (id: string) => post<{ accessCode: string }>(`/admin/staff/${id}/reset-access`),
       students: (params?: { classId?: string; search?: string }) =>
         request<{ id: string; name: string; admissionNo: string | null; className: string; classId: string; active: boolean; monitored: boolean; initials: string; avatarColor: string; guardians: { id: string; name: string; phone: string; relation: string; isPrimary: boolean }[] }[]>(
@@ -350,6 +351,8 @@ export function createApiClient({ baseUrl, getToken, onUnauthorized }: ApiClient
           payload,
         ),
       updateStudent: (id: string, payload: unknown) => patch(`/admin/students/${id}`, payload),
+      deleteStudent: (id: string) => del(`/admin/students/${id}`),
+      unlinkGuardian: (studentId: string, parentId: string) => del(`/admin/students/${studentId}/guardians/${parentId}`),
       addGuardian: (studentId: string, payload: unknown) =>
         post<{ id: string; name: string; phone: string; accessCode?: string }>(`/admin/students/${studentId}/guardians`, payload),
       parents: () =>
@@ -357,6 +360,8 @@ export function createApiClient({ baseUrl, getToken, onUnauthorized }: ApiClient
           "/admin/parents",
         ),
       resetParentAccess: (id: string) => post<{ accessCode: string }>(`/admin/parents/${id}/reset-access`),
+      updateParent: (id: string, payload: unknown) => patch(`/admin/parents/${id}`, payload),
+      deleteParent: (id: string) => del(`/admin/parents/${id}`),
       feeItems: (includeArchived?: boolean) =>
         request<FeeItemView[]>(`/admin/fee-items${includeArchived ? "?includeArchived=1" : ""}`),
       createFeeItem: (payload: unknown) => post("/admin/fee-items", payload),
