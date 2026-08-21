@@ -268,7 +268,7 @@ function AddClassModal({ onClose, onDone }: { onClose: () => void; onDone: () =>
 }
 
 function AddTermModal({ hasCurrent, onClose, onDone }: { hasCurrent: boolean; onClose: () => void; onDone: () => void }) {
-  const [form, setForm] = useState({ name: "Term 1", academicYear: "", startDate: "", endDate: "", isCurrent: !hasCurrent });
+  const [form, setForm] = useState({ name: "First Term", academicYear: "", startDate: "", endDate: "", isCurrent: !hasCurrent });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -291,9 +291,9 @@ function AddTermModal({ hasCurrent, onClose, onDone }: { hasCurrent: boolean; on
         <div className="grid grid-cols-2 gap-4">
           <Field label="Term">
             <select className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}>
-              <option>Term 1</option>
-              <option>Term 2</option>
-              <option>Term 3</option>
+              <option>First Term</option>
+              <option>Second Term</option>
+              <option>Third Term</option>
             </select>
           </Field>
           <Field label="Academic year" hint="e.g. 2026/27">

@@ -18,6 +18,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=builder /repo/apps/web/.next/standalone ./
 COPY --from=builder /repo/apps/web/.next/static ./apps/web/.next/static
+# Next's standalone output omits public/ — the crest, images and robots.txt
+# have to be carried over explicitly or every /images/* request 404s.
+COPY --from=builder /repo/apps/web/public ./apps/web/public
 
 EXPOSE 8080
 ENV PORT=8080 HOSTNAME=0.0.0.0

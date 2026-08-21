@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { SiteData } from "@/lib/api";
+import { Crest } from "./Sections";
 
 const primary = [
   { href: "#about", label: "About" },
@@ -26,17 +27,7 @@ export function Nav({ site }: { site: SiteData }) {
     <header className="sticky top-0 z-50 border-b border-border bg-[rgba(250,249,246,0.92)] backdrop-blur-[10px]">
       <div className="mx-auto flex max-w-[1180px] items-center justify-between px-6 py-3.5 md:px-12">
         <a href="#home" className="flex items-center gap-3">
-          {site.school.logoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={site.school.logoUrl} alt="" className="h-[42px] w-[42px] shrink-0 rounded-[10px] object-cover" />
-          ) : (
-            <span
-              className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-[10px] font-display text-lg font-bold text-text-primary"
-              style={{ background: site.school.primaryColor }}
-            >
-              {site.school.name.charAt(0)}
-            </span>
-          )}
+          <Crest site={site} size={42} />
           <span className="font-display text-[19px] font-semibold text-text-primary">{site.school.name}</span>
         </a>
 

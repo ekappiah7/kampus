@@ -1,6 +1,51 @@
+"use client";
+
+import { useState } from "react";
 import type { SiteData } from "@/lib/api";
 import { InquiryForm } from "./InquiryForm";
 import { VoiceForm } from "./VoiceForm";
+import { SiteImage } from "./SiteImage";
+
+/**
+ * School crest. Prefers a logo URL set in the portal, then `/images/crest.png`,
+ * and finally falls back to the school's initial on a brand-coloured tile so the
+ * header never looks broken before a crest is supplied.
+ */
+export function Crest({ site, size = 42 }: { site: SiteData; size?: number }) {
+  const [failed, setFailed] = useState(false);
+  const src = site.school.logoUrl || "/images/crest.png";
+
+  if (failed) {
+    return (
+      <span
+        className="flex shrink-0 items-center justify-center rounded-[10px] font-display font-bold text-text-primary"
+        style={{ background: site.school.primaryColor, width: size, height: size, fontSize: size * 0.45 }}
+      >
+        {site.school.name.charAt(0)}
+      </span>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt=""
+      onError={() => setFailed(true)}
+      className="shrink-0 rounded-[10px] object-contain"
+      style={{ width: size, height: size }}
+    />
+  );
+}
+
+/** Turns a person's name into the filename their photo should be saved as. */
+function photoSlot(prefix: string, name: string): string {
+  const slug = name
+    .replace(/^(Mrs|Mr|Ms|Miss|Dr|Prof)\.?\s*/i, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `${prefix}-${slug}.jpg`;
+}
 
 /** Wraps a full-bleed section with the prototype's generous vertical rhythm. */
 function Section({
@@ -29,21 +74,6 @@ function Eyebrow({ children, tone = "gold" }: { children: React.ReactNode; tone?
     >
       {children}
     </p>
-  );
-}
-
-/** Drop-zone styling for imagery the school hasn't uploaded yet. */
-function ImageSlot({ label, className = "", url }: { label: string; className?: string; url?: string | null }) {
-  if (url) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={url} alt={label} className={`h-full w-full rounded-[20px] object-cover ${className}`} />;
-  }
-  return (
-    <div
-      className={`flex items-center justify-center rounded-[20px] border-2 border-dashed border-border bg-white/60 px-4 text-center text-[13px] font-medium text-text-muted ${className}`}
-    >
-      {label}
-    </div>
   );
 }
 
@@ -102,7 +132,7 @@ export function Hero({ site }: { site: SiteData }) {
         </div>
 
         <div className="relative mt-8 md:mt-0">
-          <ImageSlot label="Hero photo of students or campus" className="h-[300px] md:h-[460px]" url={site.gallery[0]?.url} />
+          <SiteImage slot="hero.jpg" alt={`Pupils at ${site.school.name}`} className="h-[300px] w-full rounded-[28px] md:h-[460px]" hint="Wide photo of pupils or campus · 1600×1200" />
           {site.school.accreditation && (
             <div className="absolute -bottom-5 -left-2 flex items-center gap-3 rounded-[18px] bg-white px-5 py-4 shadow-card md:-left-5">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#E9F7EE] text-lg">✓</div>
@@ -140,7 +170,7 @@ export function TrustSignals({ site }: { site: SiteData }) {
               <blockquote key={t.id} className="rounded-[16px] bg-bg p-[18px]">
                 <p className="mb-3 text-[13.5px] leading-[1.6] text-[#52565C]">&ldquo;{t.quote}&rdquo;</p>
                 <footer className="flex items-center gap-2.5">
-                  <ImageSlot label="Photo" className="!h-[34px] !w-[34px] !rounded-full !text-[9px]" url={t.photoUrl} />
+                  <SiteImage slot={photoSlot("parent", t.authorName)} alt={t.authorName} url={t.photoUrl} className="h-[34px] w-[34px] shrink-0 rounded-full" hint="400×400" />
                   <span className="text-[12.5px] font-bold">
                     {t.authorName}
                     {t.relation ? `, ${t.relation}` : ""}
@@ -161,7 +191,7 @@ export function About({ site }: { site: SiteData }) {
   return (
     <Section id="about" bg="#fff">
       <div className="grid items-center gap-14 md:grid-cols-2">
-        <ImageSlot label="Photo of the school or a classroom" className="h-[280px] md:order-1 md:h-[420px]" url={site.gallery[1]?.url} />
+        <SiteImage slot="about.jpg" alt="Classroom" className="h-[280px] w-full rounded-[24px] md:order-1 md:h-[420px]" hint="Classroom or campus · 1200×1000" />
         <div className="md:order-2">
           <Eyebrow>{c?.aboutEyebrow ?? "Our story"}</Eyebrow>
           <h2 className="mb-5 font-display text-[30px] font-semibold text-[#22242A] md:text-[38px]">
@@ -407,7 +437,7 @@ export function Staff({ site }: { site: SiteData }) {
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {site.staff.slice(0, 8).map((s) => (
           <div key={s.id} className="rounded-[20px] border border-border-alt bg-white p-6 text-center">
-            <ImageSlot label="Photo" className="!mx-auto !mb-4 !h-24 !w-24 !rounded-full !text-[10px]" url={s.photoUrl} />
+            <SiteImage slot={photoSlot("staff", s.name)} alt={s.name} url={s.photoUrl} className="mx-auto mb-4 h-24 w-24 rounded-full" hint="Head-and-shoulders · 600×600" />
             <div className="mb-1 text-[16px] font-bold">{s.name}</div>
             {s.title && <div className="text-[13px] font-semibold text-brand-link">{s.title}</div>}
           </div>
@@ -428,11 +458,13 @@ export function Gallery({ site }: { site: SiteData }) {
       </div>
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4 md:grid-rows-[repeat(2,220px)]">
         {slots.map((img, i) => (
-          <ImageSlot
+          <SiteImage
             key={i}
-            label="Photo"
+            slot={`gallery-${i + 1}.jpg`}
+            alt={img?.caption ?? `Life at ${site.school.name}`}
             url={img?.url}
-            className={`h-[160px] md:h-auto ${i === 0 ? "md:col-span-2 md:row-span-2" : ""} ${i === 5 ? "md:col-span-2" : ""}`}
+            hint={i === 0 ? "Feature photo · 1200×1200" : "800×800"}
+            className={`h-[160px] w-full rounded-[20px] md:h-full ${i === 0 ? "md:col-span-2 md:row-span-2" : ""} ${i === 5 ? "md:col-span-2" : ""}`}
           />
         ))}
       </div>
@@ -508,7 +540,7 @@ export function Contact({ site }: { site: SiteData }) {
             ))}
           </div>
         </div>
-        <ImageSlot label="Map or location image" className="min-h-[280px] md:min-h-[340px]" />
+        <SiteImage slot="map.jpg" alt="Map showing the school location" className="min-h-[280px] w-full rounded-[24px] md:min-h-[340px]" hint="Map screenshot · 1200×900" />
       </div>
     </Section>
   );
@@ -521,17 +553,7 @@ export function Footer({ site }: { site: SiteData }) {
         <div className="mb-10 grid gap-10 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1fr]">
           <div>
             <div className="mb-3.5 flex items-center gap-2.5">
-              {site.school.logoUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={site.school.logoUrl} alt="" className="h-[34px] w-[34px] rounded-lg object-cover" />
-              ) : (
-                <span
-                  className="flex h-[34px] w-[34px] items-center justify-center rounded-lg font-display font-bold text-text-primary"
-                  style={{ background: site.school.primaryColor }}
-                >
-                  {site.school.name.charAt(0)}
-                </span>
-              )}
+              <Crest site={site} size={34} />
               <span className="font-display text-[17px] font-semibold text-white">{site.school.name}</span>
             </div>
             {site.content?.footerBlurb && (
