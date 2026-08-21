@@ -17,6 +17,7 @@ import {
 } from "@/lib/content";
 import { FeesMockup, ImportPreviewMockup, MarkSheetMockup, ParentMockup } from "./Mockups";
 import { Wordmark } from "./Nav";
+import { WhatsAppIcon } from "./icons";
 
 const SECTION = "mx-auto max-w-[1180px] px-6 md:px-10";
 
@@ -473,8 +474,14 @@ export function Footer() {
             <p className="mb-2.5 text-[12px] font-bold tracking-wide text-brand">TALK TO US</p>
             <ul className="flex flex-col gap-2 text-[13.5px] text-[#C9CCD1]">
               <li>
-                <a href={`https://wa.me/${PRODUCT.contact.whatsapp}`} className="hover:text-white">
+                <a href={`https://wa.me/${PRODUCT.contact.whatsapp}`} className="inline-flex items-center gap-2 hover:text-white">
+                  <WhatsAppIcon className="h-4 w-4" />
                   WhatsApp
+                </a>
+              </li>
+              <li>
+                <a href={`tel:+${PRODUCT.contact.whatsapp}`} className="hover:text-white">
+                  {PRODUCT.contact.phoneDisplay}
                 </a>
               </li>
               <li>

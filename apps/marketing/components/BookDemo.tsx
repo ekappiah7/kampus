@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { PRODUCT } from "@/lib/content";
+import { WhatsAppIcon } from "./icons";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -69,11 +70,14 @@ export function BookDemo() {
             rel="noreferrer"
             className="mt-7 inline-flex items-center gap-3 rounded-[14px] bg-[#25D366] px-6 py-4 text-[15px] font-bold text-white transition-opacity hover:opacity-90"
           >
-            <span className="text-[18px]">💬</span>
+            <WhatsAppIcon className="h-[22px] w-[22px]" />
             Message us on WhatsApp
           </a>
           <p className="mt-3 text-[13.5px] text-text-muted">
-            Or call <span className="font-bold text-text-primary">{PRODUCT.contact.phoneDisplay}</span>
+            Or call{" "}
+            <a href={`tel:+${PRODUCT.contact.whatsapp}`} className="font-bold text-text-primary hover:text-brand-link">
+              {PRODUCT.contact.phoneDisplay}
+            </a>
           </p>
         </div>
 
@@ -89,8 +93,9 @@ export function BookDemo() {
                 href={`https://wa.me/${PRODUCT.contact.whatsapp}?text=${waText}`}
                 target="_blank"
                 rel="noreferrer"
-                className="mt-2 rounded-pill bg-[#25D366] px-5 py-2.5 text-[13.5px] font-bold text-white"
+                className="mt-2 inline-flex items-center gap-2 rounded-pill bg-[#25D366] px-5 py-2.5 text-[13.5px] font-bold text-white"
               >
+                <WhatsAppIcon className="h-4 w-4" />
                 Message on WhatsApp
               </a>
             </div>

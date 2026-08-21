@@ -24,13 +24,11 @@ export const PRODUCT = {
   name: "Kampus",
   tagline: "One place to run the whole school",
   vendor: "JAKBRAIN Consult",
-  /**
-   * PLACEHOLDERS — replace before this site is shared publicly.
-   * See the note in apps/marketing/README.md.
-   */
   contact: {
-    whatsapp: "233000000000",
-    phoneDisplay: "+233 00 000 0000",
+    /** International format, digits only — what wa.me expects. */
+    whatsapp: "233547731077",
+    phoneDisplay: "054 773 1077",
+    /** PLACEHOLDER — see apps/marketing/README.md. */
     email: "hello@example.com",
   },
   demo: {
