@@ -28,8 +28,8 @@ export const PRODUCT = {
     /** International format, digits only — what wa.me expects. */
     whatsapp: "233547731077",
     phoneDisplay: "054 773 1077",
-    /** PLACEHOLDER — see apps/marketing/README.md. */
-    email: "hello@example.com",
+    /** Interim — an address on the school-facing domain will read better. */
+    email: "kampus@gmail.com",
   },
   demo: {
     portal: "https://akampuz-staff-portal.web.app",

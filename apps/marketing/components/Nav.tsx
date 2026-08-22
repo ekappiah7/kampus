@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { PRODUCT } from "@/lib/content";
+import { KampusMark } from "./Logo";
 
 const links = [
   { href: "#product", label: "Product" },
@@ -15,12 +16,7 @@ const links = [
 export function Wordmark({ light = false }: { light?: boolean }) {
   return (
     <span className="flex items-center gap-2.5">
-      <span
-        className="flex h-8 w-8 items-center justify-center rounded-[9px] font-display text-[17px] font-bold"
-        style={{ background: "#FFC629", color: "#2A2C30" }}
-      >
-        K
-      </span>
+      <KampusMark size={34} />
       <span className={`font-display text-[19px] font-bold ${light ? "text-white" : "text-text-primary"}`}>{PRODUCT.name}</span>
     </span>
   );

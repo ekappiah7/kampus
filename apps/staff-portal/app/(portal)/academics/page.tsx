@@ -29,7 +29,8 @@ export default function AcademicsPage() {
   const [classes, setClasses] = useState<ClassRow[] | null>(null);
   const [terms, setTerms] = useState<TermRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [modal, setModal] = useState<null | "class" | "term" | "subjects">(null);
+  const [modal, setModal] = useState<null | "class" | "term" | "subjects" | "editTerm">(null);
+  const [editTerm, setEditTerm] = useState<TermRow | null>(null);
   const [subjectTarget, setSubjectTarget] = useState<ClassRow | null>(null);
   const { toast, toastNode } = useToast();
 
@@ -70,6 +71,18 @@ export default function AcademicsPage() {
     await api.admin.setCurrentTerm(t.id);
     toast({ kind: "ok", text: `${t.name} is now the current term` });
     load();
+  }
+
+  /** A term with marks or fees behind it is the school's record — only empty ones go. */
+  async function removeTerm(t: TermRow) {
+    if (!window.confirm(`Delete ${t.name}, ${t.academicYear}?`)) return;
+    try {
+      await api.admin.deleteTerm(t.id);
+      toast({ kind: "ok", text: `${t.name} deleted` });
+      load();
+    } catch (e) {
+      toast({ kind: "err", text: e instanceof Error ? e.message : "Could not delete." });
+    }
   }
 
   const current = terms?.find((t) => t.isCurrent);
@@ -123,6 +136,18 @@ export default function AcademicsPage() {
                     Make current
                   </button>
                 )}
+                <button
+                  onClick={() => {
+                    setEditTerm(t);
+                    setModal("editTerm");
+                  }}
+                  className="text-[12px] font-bold text-text-muted hover:text-brand-link"
+                >
+                  Rename
+                </button>
+                <button onClick={() => removeTerm(t)} className="text-[12px] font-bold text-text-muted hover:text-danger">
+                  Delete
+                </button>
               </div>
             ))}
           </Card>
@@ -229,10 +254,83 @@ export default function AcademicsPage() {
         />
       )}
 
+      {modal === "editTerm" && editTerm && (
+        <EditTermModal
+          term={editTerm}
+          onClose={() => setModal(null)}
+          onDone={() => {
+            setModal(null);
+            load();
+            toast({ kind: "ok", text: "Term updated" });
+          }}
+        />
+      )}
+
       {toastNode}
     </>
   );
 }
+
+/**
+ * Renaming a term.
+ *
+ * The term's id never changes, so every mark, fee and report card already attached
+ * to it stays attached — which is what makes correcting the name safe long after
+ * the term has started.
+ */
+function EditTermModal({ term, onClose, onDone }: { term: TermRow; onClose: () => void; onDone: () => void }) {
+  const [form, setForm] = useState({
+    name: term.name,
+    academicYear: term.academicYear,
+    startDate: term.startDate.slice(0, 10),
+    endDate: term.endDate.slice(0, 10),
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api.admin.updateTerm(term.id, form);
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save those changes.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={`Edit ${term.name}`} onClose={onClose}>
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        <Field label="Term" hint="Appears on every report card for this term">
+          <select className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}>
+            <option>First Term</option>
+            <option>Second Term</option>
+            <option>Third Term</option>
+          </select>
+        </Field>
+        <Field label="Academic year">
+          <input className={inputClass} required value={form.academicYear} onChange={(e) => setForm({ ...form, academicYear: e.target.value })} placeholder="2025/2026" />
+        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Starts">
+            <input className={inputClass} type="date" required value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} />
+          </Field>
+          <Field label="Ends">
+            <input className={inputClass} type="date" required value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} />
+          </Field>
+        </div>
+        {error && <p className="rounded-[10px] bg-danger-tint px-3.5 py-2.5 text-[13px] font-medium text-danger">{error}</p>}
+        <Button type="submit" className="!py-3" disabled={busy}>
+          {busy ? "Saving…" : "Save changes"}
+        </Button>
+      </form>
+    </Modal>
+  );
+}
+
 
 function AddClassModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const [name, setName] = useState("");

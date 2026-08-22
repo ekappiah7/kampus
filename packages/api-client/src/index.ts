@@ -31,6 +31,20 @@ export interface FeeItemView {
   billedCount: number;
 }
 
+export interface PaymentRow {
+  id: string;
+  amount: number;
+  method: string;
+  reference: string | null;
+  status: "SUCCESS" | "REVERSED";
+  studentId: string;
+  studentName: string;
+  parentName: string | null;
+  reversedReason: string | null;
+  createdAt: string;
+  confirmedAt: string | null;
+}
+
 export interface FeeOverviewRow {
   studentId: string;
   name: string;
@@ -333,6 +347,8 @@ export function createApiClient({ baseUrl, getToken, onUnauthorized }: ApiClient
         request<{ id: string; name: string; academicYear: string; startDate: string; endDate: string; isCurrent: boolean }[]>("/admin/terms"),
       createTerm: (payload: unknown) => post("/admin/terms", payload),
       setCurrentTerm: (id: string) => post(`/admin/terms/${id}/set-current`),
+      updateTerm: (id: string, payload: unknown) => patch(`/admin/terms/${id}`, payload),
+      deleteTerm: (id: string) => del(`/admin/terms/${id}`),
       staff: () =>
         request<{ id: string; name: string; email: string; role: string; title: string | null; phone: string | null; status: string; className: string | null; classId: string | null; initials: string; pendingAccessCode: string | null }[]>(
           "/admin/staff",
@@ -380,6 +396,8 @@ export function createApiClient({ baseUrl, getToken, onUnauthorized }: ApiClient
           "/admin/payments/pending-cash",
         ),
       confirmPayment: (id: string, amount?: number) => post(`/admin/payments/${id}/confirm`, amount ? { amount } : {}),
+      payments: () => request<PaymentRow[]>("/admin/payments"),
+      reversePayment: (id: string, reason: string) => post<{ ok: true; amount: number }>(`/admin/payments/${id}/reverse`, { reason }),
       manualPayment: (payload: { studentId: string; amount: number; note?: string }) => post("/admin/payments/manual", payload),
       createScholarship: (payload: unknown) => post("/admin/scholarships", payload),
       createDiscount: (payload: unknown) => post("/admin/discounts", payload),

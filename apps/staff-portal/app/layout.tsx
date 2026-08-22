@@ -8,6 +8,10 @@ export const metadata: Metadata = {
   title: "Staff Portal",
   description: "Attendance, grades, fees and school administration.",
   manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }],
+  },
   appleWebApp: { capable: true, statusBarStyle: "default", title: "Staff Portal" },
 };
 

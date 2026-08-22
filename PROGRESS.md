@@ -142,6 +142,33 @@ A withdrawn item can be restored, or removed from the list for good — the latt
 detaches the ledger rows rather than deleting them, and each row's note already
 names the fee in words.
 
+## Correcting anything
+
+The rule across the system, applied the same way everywhere: **deactivate or
+reverse is the normal path, delete is only for records with nothing behind them**,
+and a refusal always names what is holding it.
+
+| Thing | Correct it | Remove it |
+|---|---|---|
+| Fee item | — | Delete if unbilled, otherwise withdraw (charges reverse) |
+| One pupil's fee | — | Waive for that pupil |
+| Payment | — | Reverse — the row stays, marked, with a reason |
+| Pupil / guardian / staff | Edit | Delete if no history, otherwise deactivate |
+| Term | Rename | Delete only if empty |
+| Assessment column | — | Remove, with its scores |
+
+Two subtleties worth keeping:
+
+**Billing is not history.** Adding a pupil bills them immediately, so a pupil has a
+charge within a second of being created. Counting that as history would make a
+mistyped name permanent. Unpaid charges are cleared with the pupil; a payment, mark
+or attendance record blocks the delete.
+
+**A reversed payment stops counting but stays visible.** `totalPaid` skips PAYMENT
+ledger rows whose payment is REVERSED, and deliberately does *not* sum the REVERSAL
+row beside it — that row is the audit trail, and summing it would count the
+correction twice.
+
 ## Marks: the Excel round trip
 
 Teachers here mark at home, often with no internet, and most are quicker in Excel
@@ -194,10 +221,7 @@ to undo.
    forward are needed before a school reaches its second September.
 9. **No CI.** `cloudbuild/*.yaml` holds the build configs, but nothing runs them
    on merge.
-10. **A confirmed payment can't be reversed.** Cash confirmed in error has to be
-    corrected by hand. It is the same shape as a withdrawn fee — append a
-    reversing ledger row — and should be built next to it.
-11. **`apps/mobile` is parked** — native Expo shell, excluded from the workspace.
+10. **`apps/mobile` is parked** — native Expo shell, excluded from the workspace.
     See `apps/mobile/PARKED.md`.
 
 ## Build notes

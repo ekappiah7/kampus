@@ -158,12 +158,23 @@ export async function recomputeCharges(studentId: string, termId: string): Promi
   });
 }
 
+/**
+ * What a pupil has actually paid this term.
+ *
+ * A reversed payment stops counting here, but its ledger row stays put — that is
+ * the whole point of reversing rather than deleting. The REVERSAL row beside it is
+ * the visible record and is deliberately *not* summed, or the correction would be
+ * counted twice.
+ */
 export async function totalPaid(studentId: string, termId: string): Promise<number> {
-  const agg = await prisma.feeLedgerEntry.aggregate({
+  const entries = await prisma.feeLedgerEntry.findMany({
     where: { studentId, termId, type: "PAYMENT" },
-    _sum: { amount: true },
+    include: { payment: { select: { status: true } } },
   });
-  return money(Math.abs(agg._sum.amount ?? 0));
+  const total = entries
+    .filter((e) => e.payment?.status !== "REVERSED")
+    .reduce((sum, e) => sum + e.amount, 0);
+  return money(Math.abs(total));
 }
 
 export interface StudentBalance {

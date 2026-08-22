@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Badge, Button, Card, EmptyState, ErrorState, Field, Modal, PageHeader, Skeleton, inputClass, money, useToast } from "@/components/ui";
-import type { FeeItemView, FeeOverviewRow } from "@kampus/api-client";
+import type { FeeItemView, FeeOverviewRow, PaymentRow } from "@kampus/api-client";
 
 type FeeItem = FeeItemView;
 type OverviewRow = FeeOverviewRow;
@@ -22,11 +22,14 @@ export default function FeesPage() {
   const [cash, setCash] = useState<PendingCash[]>([]);
   const [classes, setClasses] = useState<{ id: string; name: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [modal, setModal] = useState<null | "item" | "adjust" | "payment" | "drop" | "waive">(null);
+  const [modal, setModal] = useState<null | "item" | "adjust" | "payment" | "drop" | "waive" | "reverse">(null);
   const [target, setTarget] = useState<OverviewRow | null>(null);
   const [dropTarget, setDropTarget] = useState<FeeItem | null>(null);
   const [filter, setFilter] = useState<"all" | "owing">("all");
   const [showWithdrawn, setShowWithdrawn] = useState(false);
+  const [payments, setPayments] = useState<PaymentRow[]>([]);
+  const [showPayments, setShowPayments] = useState(false);
+  const [reverseTarget, setReverseTarget] = useState<PaymentRow | null>(null);
   const { toast, toastNode } = useToast();
 
   const load = useCallback(() => {
@@ -37,6 +40,7 @@ export default function FeesPage() {
       .then((o) => setOverview(o as typeof overview))
       .catch((e) => setError(e instanceof Error ? e.message : "Could not load fees."));
     api.admin.pendingCash().then((c) => setCash(c as PendingCash[])).catch(() => setCash([]));
+    api.admin.payments().then(setPayments).catch(() => setPayments([]));
     api.admin.classes().then((c) => setClasses(c.map((x) => ({ id: x.id, name: x.name })))).catch(() => setClasses([]));
   }, []);
 
@@ -217,6 +221,69 @@ export default function FeesPage() {
         )}
       </div>
 
+      {payments.length > 0 && (
+        <div className="mb-6">
+          <button
+            onClick={() => setShowPayments((v) => !v)}
+            className="text-[13px] font-bold uppercase tracking-wide text-text-muted hover:text-brand-link"
+          >
+            {showPayments ? "▾" : "▸"} Payments received ({payments.filter((p) => p.status === "SUCCESS").length})
+          </button>
+          {showPayments && (
+            <Card className="mt-2 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] text-left">
+                  <thead className="bg-bg">
+                    <tr>
+                      {["PUPIL", "AMOUNT", "METHOD", "WHEN", ""].map((h) => (
+                        <th key={h} className="px-5 py-3 text-[12.5px] font-bold text-text-muted">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payments.map((p) => (
+                      <tr key={p.id} className="border-b border-[#F0F0EE] last:border-0">
+                        <td className="px-5 py-3">
+                          <span className={`block text-sm font-semibold ${p.status === "REVERSED" ? "text-text-muted line-through" : ""}`}>
+                            {p.studentName}
+                          </span>
+                          {p.reversedReason && <span className="block text-[11.5px] text-danger">Reversed — {p.reversedReason}</span>}
+                        </td>
+                        <td className="px-5 py-3 text-[13.5px] font-bold">{money(p.amount)}</td>
+                        <td className="px-5 py-3 text-[12.5px] text-text-muted">
+                          {p.method.replace(/_/g, " ").toLowerCase()}
+                          {p.reference && <span className="block font-mono text-[11px]">{p.reference}</span>}
+                        </td>
+                        <td className="px-5 py-3 text-[12.5px] text-text-muted">
+                          {new Date(p.confirmedAt ?? p.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                        </td>
+                        <td className="px-5 py-3 text-right">
+                          {p.status === "SUCCESS" ? (
+                            <button
+                              onClick={() => {
+                                setReverseTarget(p);
+                                setModal("reverse");
+                              }}
+                              className="text-[12px] font-bold text-text-muted hover:text-danger"
+                            >
+                              Reverse
+                            </button>
+                          ) : (
+                            <Badge label="Reversed" tone="red" />
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+        </div>
+      )}
+
       <div>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <p className="text-[13px] font-bold uppercase tracking-wide text-text-muted">Pupil balances</p>
@@ -346,6 +413,18 @@ export default function FeesPage() {
       {modal === "drop" && dropTarget && (
         <DropFeeItemModal
           item={dropTarget}
+          onClose={() => setModal(null)}
+          onDone={(msg) => {
+            setModal(null);
+            load();
+            toast({ kind: "ok", text: msg });
+          }}
+        />
+      )}
+
+      {modal === "reverse" && reverseTarget && (
+        <ReversePaymentModal
+          payment={reverseTarget}
           onClose={() => setModal(null)}
           onDone={(msg) => {
             setModal(null);
@@ -739,6 +818,58 @@ function AdjustModal({
 
         <Button type="submit" className="!py-3" disabled={busy || items.length === 0}>
           {busy ? "Applying…" : `Apply ${mode}`}
+        </Button>
+      </form>
+    </Modal>
+  );
+}
+
+/**
+ * Undoing a payment confirmed in error.
+ *
+ * The payment is not erased — a reversal is written beside it with the reason, the
+ * same way a withdrawn fee is handled. A bursar's ledger has to show money received
+ * and money undone, not a hole where a payment used to be.
+ */
+function ReversePaymentModal({ payment, onClose, onDone }: { payment: PaymentRow; onClose: () => void; onDone: (msg: string) => void }) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.admin.reversePayment(payment.id, reason);
+      onDone(`${money(r.amount)} reversed on ${payment.studentName}'s account`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not reverse that payment.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={`Reverse ${money(payment.amount)}?`} onClose={onClose}>
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        <p className="rounded-[10px] bg-[#FFF7DF] px-3.5 py-3 text-[13px] leading-relaxed text-[#8A6200]">
+          {payment.studentName}&apos;s balance goes back up by {money(payment.amount)}. The payment stays on the record with
+          this reason beside it, and the guardian is notified — so use this for a genuine mistake, not to tidy the list.
+        </p>
+        <Field label="Why is it being reversed?" hint="Kept in the ledger, permanently">
+          <input
+            className={inputClass}
+            required
+            autoFocus
+            maxLength={200}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Confirmed against the wrong pupil"
+          />
+        </Field>
+        {error && <p className="rounded-[10px] bg-danger-tint px-3.5 py-2.5 text-[13px] font-medium text-danger">{error}</p>}
+        <Button type="submit" className="!py-3" disabled={busy}>
+          {busy ? "Reversing…" : "Reverse this payment"}
         </Button>
       </form>
     </Modal>

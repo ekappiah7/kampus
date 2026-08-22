@@ -211,6 +211,73 @@ adminRouter.post("/terms", async (req, res) => {
   res.status(201).json(created);
 });
 
+/**
+ * Correcting a term.
+ *
+ * A term named wrongly — "Term 1" where the school says "First Term" — prints on
+ * every report card that references it, so it has to be fixable without touching
+ * the marks and fees already hanging off it. Renaming does exactly that: the id
+ * never changes, so nothing attached to it moves.
+ */
+adminRouter.patch("/terms/:id", async (req, res) => {
+  const parsed = termSchema.partial().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const schoolId = req.auth!.schoolId;
+  const term = await prisma.term.findFirst({ where: { id: req.params.id, schoolId } });
+  if (!term) return res.status(404).json({ error: "Term not found" });
+
+  const { isCurrent, startDate, endDate, ...rest } = parsed.data;
+  if (isCurrent) await prisma.term.updateMany({ where: { schoolId }, data: { isCurrent: false } });
+
+  const updated = await prisma.term.update({
+    where: { id: term.id },
+    data: {
+      ...rest,
+      ...(startDate ? { startDate: new Date(startDate) } : {}),
+      ...(endDate ? { endDate: new Date(endDate) } : {}),
+      ...(isCurrent === undefined ? {} : { isCurrent }),
+    },
+  });
+  audit(req.auth!, "term.update", { schoolId, entity: `term:${term.id}`, detail: `${updated.name} ${updated.academicYear}` });
+  res.json(updated);
+});
+
+/** Only an empty term can go. One with marks or fees behind it is the school's record. */
+adminRouter.delete("/terms/:id", async (req, res) => {
+  const schoolId = req.auth!.schoolId;
+  const term = await prisma.term.findFirst({ where: { id: req.params.id, schoolId } });
+  if (!term) return res.status(404).json({ error: "Term not found" });
+
+  // Attendance is dated rather than term-scoped, so it is counted by date range.
+  const [marks, charges, attendance, reportCards] = await Promise.all([
+    prisma.assessmentEntry.count({ where: { termId: term.id } }),
+    prisma.studentFeeCharge.count({ where: { termId: term.id } }),
+    prisma.attendanceRecord.count({ where: { date: { gte: term.startDate, lte: term.endDate } } }),
+    prisma.reportCard.count({ where: { termId: term.id } }),
+  ]);
+  const history = [
+    { one: "recorded mark", many: "recorded marks", n: marks },
+    { one: "fee charge", many: "fee charges", n: charges },
+    { one: "attendance record", many: "attendance records", n: attendance },
+    { one: "report card", many: "report cards", n: reportCards },
+  ].filter((r) => r.n > 0);
+
+  if (history.length) {
+    return res.status(409).json({
+      error: `${term.name} has ${describeHistory(history)} behind it and cannot be deleted. Rename it instead, or make another term current.`,
+      history,
+    });
+  }
+  if (term.isCurrent) {
+    const others = await prisma.term.count({ where: { schoolId, NOT: { id: term.id } } });
+    if (others > 0) return res.status(400).json({ error: "Make another term current before deleting this one." });
+  }
+
+  await prisma.term.delete({ where: { id: term.id } });
+  audit(req.auth!, "term.delete", { schoolId, entity: `term:${term.id}`, detail: `${term.name} ${term.academicYear}` });
+  res.json({ ok: true });
+});
+
 adminRouter.post("/terms/:id/set-current", async (req, res) => {
   const schoolId = req.auth!.schoolId;
   const term = await prisma.term.findFirst({ where: { id: req.params.id, schoolId } });
@@ -1075,6 +1142,99 @@ adminRouter.post("/payments/:id/confirm", async (req, res) => {
 
 /** Records a payment taken directly at the office, with no parent-app step. */
 const manualPaymentSchema = z.object({ studentId: z.string(), amount: z.number().positive(), note: z.string().optional() });
+
+/** Every settled payment this term, newest first — what a reversal is chosen from. */
+adminRouter.get("/payments", async (req, res) => {
+  const schoolId = req.auth!.schoolId;
+  const payments = await prisma.payment.findMany({
+    where: { student: { schoolId }, status: { in: ["SUCCESS", "REVERSED"] } },
+    include: { student: true, parent: true },
+    orderBy: { createdAt: "desc" },
+    take: 200,
+  });
+  res.json(
+    payments.map((p) => ({
+      id: p.id,
+      amount: p.amount,
+      method: p.method,
+      reference: p.reference,
+      status: p.status,
+      studentId: p.studentId,
+      studentName: p.student.name,
+      parentName: p.parent?.name ?? null,
+      reversedReason: p.reversedReason,
+      createdAt: p.createdAt.toISOString(),
+      confirmedAt: p.confirmedAt?.toISOString() ?? null,
+    })),
+  );
+});
+
+const reversePaymentSchema = z.object({ reason: z.string().min(1).max(200) });
+
+/**
+ * Undoes a payment confirmed in error — the wrong pupil, the wrong amount, a cash
+ * reference confirmed twice.
+ *
+ * The payment row is not deleted and its ledger entry is not touched. A REVERSAL is
+ * appended beside it carrying the reason, exactly as a withdrawn fee is handled, so
+ * a year later the record shows money received and money undone rather than a hole
+ * where a payment used to be. That is the difference between a correction and a
+ * cover-up, and a bursar's ledger has to be able to tell them apart.
+ */
+adminRouter.post("/payments/:id/reverse", async (req, res) => {
+  const parsed = reversePaymentSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Say briefly why this payment is being reversed." });
+
+  const schoolId = req.auth!.schoolId;
+  const payment = await prisma.payment.findFirst({
+    where: { id: req.params.id, student: { schoolId } },
+    include: { student: true, ledgerEntry: true },
+  });
+  if (!payment) return res.status(404).json({ error: "Payment not found" });
+  if (payment.status === "REVERSED") return res.status(409).json({ error: "This payment has already been reversed." });
+  if (payment.status !== "SUCCESS") return res.status(409).json({ error: "Only a confirmed payment can be reversed." });
+
+  // The reversal belongs to the term the payment was credited to, not today's term —
+  // otherwise reversing an old payment would move money between terms.
+  const termId = payment.ledgerEntry?.termId ?? (await prisma.term.findFirst({ where: { schoolId, isCurrent: true } }))?.id;
+  if (!termId) return res.status(400).json({ error: "No term to reverse this against." });
+
+  await prisma.$transaction([
+    prisma.feeLedgerEntry.create({
+      data: {
+        studentId: payment.studentId,
+        termId,
+        type: "REVERSAL",
+        // The payment sits in the ledger as a negative; undoing it is the positive.
+        amount: payment.amount,
+        note: `Payment reversed — ${parsed.data.reason}`,
+        createdByStaffId: req.auth!.id,
+      },
+    }),
+    prisma.payment.update({
+      where: { id: payment.id },
+      data: { status: "REVERSED", reversedAt: new Date(), reversedReason: parsed.data.reason },
+    }),
+  ]);
+
+  await recomputeCharges(payment.studentId, termId);
+  await prisma.notification.create({
+    data: {
+      schoolId,
+      parentId: payment.parentId,
+      type: "FEE_REMINDER",
+      title: "A payment was corrected",
+      body: `A payment of GH₵${payment.amount} on ${payment.student.name}'s account has been reversed. Please contact the school office.`,
+    },
+  });
+
+  audit(req.auth!, "payment.reverse", {
+    schoolId,
+    entity: `payment:${payment.id}`,
+    detail: `GH₵${payment.amount} for ${payment.student.name} — ${parsed.data.reason}`,
+  });
+  res.json({ ok: true, amount: payment.amount });
+});
 
 adminRouter.post("/payments/manual", async (req, res) => {
   const parsed = manualPaymentSchema.safeParse(req.body);

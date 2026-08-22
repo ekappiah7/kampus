@@ -654,6 +654,9 @@ enum PaymentStatus {
   PENDING
   SUCCESS
   FAILED
+  /// Confirmed in error and undone. The payment row stays; a REVERSAL sits beside
+  /// its ledger entry, so the correction reads as a correction rather than a gap.
+  REVERSED
 }
 
 model Payment {
@@ -669,6 +672,8 @@ model Payment {
   /// Cash payments start PENDING and are confirmed at the office by a staff member.
   confirmedByStaffId String?
   confirmedAt        DateTime?
+  reversedAt         DateTime?
+  reversedReason     String?
   createdAt          DateTime      @default(now())
 
   ledgerEntry FeeLedgerEntry?
