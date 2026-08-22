@@ -1,4 +1,4 @@
-import { Nav } from "@/components/Nav";
+import { Nav, PromoBar } from "@/components/Nav";
 import { BookDemo } from "@/components/BookDemo";
 import {
   Capabilities,
@@ -16,6 +16,7 @@ import {
 export default function Page() {
   return (
     <>
+      <PromoBar />
       <Nav />
       <main>
         <Hero />

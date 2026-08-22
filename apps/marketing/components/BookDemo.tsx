@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { PRODUCT } from "@/lib/content";
+import { PRODUCT, TRIAL } from "@/lib/content";
 import { WhatsAppIcon } from "./icons";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -48,21 +48,18 @@ export function BookDemo() {
   }
 
   const waText = encodeURIComponent(
-    `Hello, I'd like a demo of ${PRODUCT.name} for my school.`,
+    `Hello, I'd like to start my school's free term trial of ${PRODUCT.name}.`,
   );
 
   return (
     <section id="book" className="border-b border-border py-16 md:py-20">
       <div className="mx-auto grid max-w-[1180px] gap-10 px-6 md:px-10 lg:grid-cols-[0.9fr_1.1fr]">
         <div>
-          <p className="mb-3 text-[12px] font-extrabold tracking-[0.14em] text-brand-link">GET STARTED</p>
-          <h2 className="font-display text-[30px] font-bold leading-[1.15] md:text-[40px]">
-            Let&apos;s set your school up on it.
-          </h2>
-          <p className="mt-4 text-[16px] leading-relaxed text-text-secondary">
-            Tell us about the school and we&apos;ll walk you through it — a real session on the live system, with your classes,
-            your fees and your terms, not a slideshow.
-          </p>
+          <span className="mb-3 inline-block rounded-pill bg-brand px-3 py-1 text-[11px] font-extrabold tracking-wide text-text-primary">
+            {TRIAL.badge}
+          </span>
+          <h2 className="font-display text-[30px] font-bold leading-[1.15] md:text-[40px]">{TRIAL.headline}</h2>
+          <p className="mt-4 text-[16px] leading-relaxed text-text-secondary">{TRIAL.body}</p>
 
           <a
             href={`https://wa.me/${PRODUCT.contact.whatsapp}?text=${waText}`}
@@ -162,7 +159,7 @@ export function BookDemo() {
                 disabled={state === "sending"}
                 className="rounded-pill bg-dark-pill py-3.5 text-[15px] font-bold text-brand transition-opacity hover:opacity-90 disabled:opacity-60"
               >
-                {state === "sending" ? "Sending…" : "Request a demo"}
+                {state === "sending" ? "Sending…" : TRIAL.cta}
               </button>
               <p className="text-[12px] leading-relaxed text-text-muted">
                 We use this to contact you about {PRODUCT.name} and nothing else. No lists, no forwarding.

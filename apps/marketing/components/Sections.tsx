@@ -13,6 +13,7 @@ import {
   PROOF,
   STATUS_LABEL,
   SURFACES,
+  TRIAL,
   type Status,
 } from "@/lib/content";
 import { FeesMockup, ImportPreviewMockup, MarkSheetMockup, ParentMockup } from "./Mockups";
@@ -69,7 +70,7 @@ export function Hero() {
 
           <div className="mt-8 flex flex-wrap gap-3">
             <a href="#book" className="rounded-pill bg-dark-pill px-7 py-3.5 text-[15px] font-bold text-brand transition-opacity hover:opacity-90">
-              Book a demo
+              {TRIAL.cta} →
             </a>
             <a
               href="#demo"
@@ -78,6 +79,9 @@ export function Hero() {
               See it running now
             </a>
           </div>
+          <p className="mt-3 text-[13px] font-semibold text-text-muted">
+            {TRIAL.badge} · no card, no commitment
+          </p>
 
           <dl className="mt-10 grid max-w-[560px] grid-cols-2 gap-x-6 gap-y-4">
             {PROOF.map((p) => (
@@ -387,12 +391,16 @@ export function Pricing() {
                 href="#book"
                 className="mt-6 block rounded-pill bg-dark-pill py-3 text-center text-[14px] font-bold text-brand transition-opacity hover:opacity-90"
               >
-                Get a quote
+                {TRIAL.cta}
               </a>
             </div>
           ))}
         </div>
-        <p className="mt-6 text-[13.5px] leading-relaxed text-text-muted">
+        <p className="mt-6 rounded-[12px] bg-[#FFF7DF] px-5 py-3.5 text-[13.5px] leading-relaxed text-[#8A6200]">
+          <strong>{TRIAL.badge}.</strong> Every tier above starts with a full term at no cost, run beside whatever your school
+          uses today. Pricing only applies if you choose to continue after that.
+        </p>
+        <p className="mt-4 text-[13.5px] leading-relaxed text-text-muted">
           Setup, data entry help and staff training are included in every tier. There is no separate installation fee, and no
           charge for the school website.
         </p>

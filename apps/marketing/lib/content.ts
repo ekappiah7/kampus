@@ -49,6 +49,19 @@ export const HERO = {
     "Fees, marks, attendance, report cards, parent messages and your public website — one system, built around how a Ghanaian basic school actually works.",
 };
 
+/**
+ * The trial offer, in one place for the same reason everything else is: the social
+ * graphics, the landing page banner and the pricing section all quote this text
+ * directly, so the offer can never say one thing in an ad and another on the site
+ * a prospect lands on.
+ */
+export const TRIAL = {
+  badge: "ONE FULL TERM, FREE",
+  headline: "Run it beside what you use now. Decide with real numbers.",
+  body: "No card, no commitment. We set your school up — your classes, your fees, your pupils — and you use it for a full term next to your current system. If it doesn't save your bursar time and your front office headaches, you owe us nothing and walk away with your data.",
+  cta: "Start your free term",
+};
+
 /** Four claims, each one specific enough to be checked. Vague ones don't sell. */
 export const PROOF = [
   { label: "Crèche to JHS", detail: "Terms, not semesters. GES report format." },
@@ -228,7 +241,7 @@ export const DIFFERENTIATORS = [
 // ---------------------------------------------------------------------------
 
 export const PRICING = {
-  note: "Priced per pupil, per term — so it scales with the school rather than landing as one bill in September.",
+  note: "Priced per pupil, per term — so it scales with the school rather than landing as one bill in September. Every tier starts with a full free term.",
   tiers: [
     { name: "Starter", forWho: "Up to 150 pupils", price: null, features: ["Staff Portal", "Parent App", "School website", "Setup and training included"] },
     { name: "Standard", forWho: "150 – 500 pupils", price: null, features: ["Everything in Starter", "Pickup desk", "Priority support", "Termly review"], featured: true },
@@ -237,6 +250,10 @@ export const PRICING = {
 };
 
 export const FAQ = [
+  {
+    q: "What does the free term actually include?",
+    a: "Everything — Staff Portal, Parent App and your school website, set up with your real classes, fees and pupils, for a full term. Run it beside whatever you use now and compare. There's no card on file and nothing charges automatically when the term ends; you tell us if you want to continue.",
+  },
   {
     q: "What happens when the internet goes down?",
     a: "Teachers can download their mark sheets and work offline, then upload when they're back. Cash payments never needed the internet in the first place — the office confirms them. What does need a connection is the portal itself, so a school on very poor internet should plan for a phone hotspot at the office.",

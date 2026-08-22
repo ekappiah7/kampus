@@ -1,8 +1,29 @@
 "use client";
 
 import { useState } from "react";
-import { PRODUCT } from "@/lib/content";
+import { PRODUCT, TRIAL } from "@/lib/content";
 import { KampusMark } from "./Logo";
+
+/**
+ * Slim announcement bar, above the sticky nav rather than inside it.
+ *
+ * This is the line an ad's click-through has to land on saying the same thing the
+ * ad said — a school owner arriving from a "free full term" post who finds pricing
+ * copy instead has already decided the ad was bait.
+ */
+export function PromoBar() {
+  return (
+    <div className="bg-dark-pill py-2 text-center text-[12.5px] font-semibold text-white">
+      <a href="#book" className="inline-flex flex-wrap items-center justify-center gap-x-2 px-4">
+        <span className="rounded-pill bg-brand px-2 py-0.5 text-[10.5px] font-extrabold tracking-wide text-text-primary">
+          {TRIAL.badge}
+        </span>
+        <span className="text-[#C9CCD1]">Test Kampus alongside what you use now — no card, no commitment.</span>
+        <span className="font-bold text-brand underline underline-offset-2">{TRIAL.cta} →</span>
+      </a>
+    </div>
+  );
+}
 
 const links = [
   { href: "#product", label: "Product" },
